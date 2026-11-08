@@ -2,7 +2,7 @@
 
 A context-sensitive character immersion addon for **World of Warcraft: Forever**.
 
-**Status: API proof-of-concept, not a finished automatic emote addon.** The first build records live game signals and lets you optionally test whether Forever permits native emotes from those signals. The game can reject event-driven emotes even when the event itself is readable.
+**Status: experimental v0.1.0.** A user has confirmed that a manually initiated wave and an automatic post-combat TRAIN emote play in Forever. Other event handlers still need live testing. Native calls may return `false` even when the animation visibly plays; that return value is logged as diagnostics rather than definitive failure.
 
 ## Install
 
@@ -18,14 +18,19 @@ Copy this repository into `World of Warcraft/_forever_/Interface/AddOns/EmotaSpe
 - `/emota test` — manually request a `WAVE` emote to prove the API exists
 - `/emota health` — report whether health and mana values are accessible or secret
 
-## Currently observed / probed signals
+## Implemented reactions (not all tested in game)
 
-- `UI_ERROR_MESSAGE` / localized `ERR_OUT_OF_MANA`: attempted cast without enough mana, **not** arbitrary mana percentage.
+- `UI_ERROR_MESSAGE` / localized `ERR_OUT_OF_MANA`: a failed cast due to insufficient mana attempts `OOM`. This is not a mana percentage check.
+- `ERR_OUT_OF_FOCUS` and `ERR_OUT_OF_ENERGY`: rare `SIGH` after a resource-related failed cast.
 - `UNIT_DIED`: player pet or mapped party/raid member death, subject to GUID secrecy.
 - `UNIT_COMBAT`: the player's dodge, block and parry events.
 - `UNIT_SPELLCAST_INTERRUPTED`: interrupted player cast.
 - `PLAYER_REGEN_DISABLED` and `PLAYER_REGEN_ENABLED`: combat start/end (not kill count).
-- `PLAYER_LEVEL_UP`: level celebration.
+- `PLAYER_LEVEL_UP`: `CHEER` on leveling.
+- `UI_INFO_MESSAGE` / `ERR_TRADE_COMPLETE`: likely `BOW` after an actually successful trade, not just a closed trade window.
+- `CHAT_MSG_TEXT_EMOTE`: English-only targeted "/wave" reply with a five-minute anti-loop lock; requires target name and the phrase "waves at you".
+- `QUEST_TURNED_IN`: rare `CHEER`.
+- `PLAYER_UNGHOST`: occasional `SIGH`.
 - `UNIT_HEALTH`: low-health percentage **only when it is readable outside combat**.
 
 ## Critical limits
@@ -36,4 +41,6 @@ See [FEASIBILITY.md](FEASIBILITY.md) for documented API decisions and validation
 
 ## Development
 
-v0.0.1 = instrument first, verify on the actual Forever client, then expand social reactions. This code has not yet been tested in the game.
+v0.1.0 = observed working manual wave and automatic post-fight train from v0.0.1, expanded event recognition, optional social responses, rare quest/rez reactions, corrected diagnostics. Still experimental. Keep `/emota debug on` for testing; with `/emota auto on`, emotes are rate-limited to at most one native attempt every 45 seconds, with at least two minutes between the same reason. Targeted wave replies additionally require five minutes between replies. These are intentional anti-spam defaults.
+
+**How to test:** after updating, `/reload`; use `/emota status` to check whether auto is enabled. Attempt a spell you cannot afford, complete a trade, and have a friend wave directly at your character. Check both the in-game action and debug text. No chat replies are generated and no combat percentage measurements are attempted.
