@@ -1,0 +1,8 @@
+## Interface: 16001
+## Title: EmotaSpeak
+## Notes: Contextual emote API probe for WoW Forever
+## Author: Detok
+## Version: 0.0.1
+## SavedVariablesPerCharacter: EmotaSpeakDB
+
+EmotaSpeak.lua
