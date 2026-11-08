@@ -9,6 +9,7 @@ local inCombat = false
 local combatStarted = 0
 local guidToCompanion = {}
 local lastAttempt = -1e8
+local lastMeaningfulAttempt = -1e8
 local lastWaveReply = -1e8
 local lastByReason = {}
 local lowHPNoted = false
@@ -86,6 +87,7 @@ local function NativeEmote(token, reason, manual, targetName)
             return
         end
         lastAttempt = now
+        if reason ~= "idle-joke" then lastMeaningfulAttempt = now end
         lastByReason[reason] = now
     end
 
@@ -199,7 +201,7 @@ local function CheckIdle()
     if not settings or not settings.auto or not settings.idleAuto then return end
     if not idleSince or not idleAfterSeconds then return end
     if GetTime() - idleSince < idleAfterSeconds then return end
-    if GetTime() - lastAttempt < 120 then return end
+    if GetTime() - lastMeaningfulAttempt < 120 then return end
     if not IdleIsSafe() then return end
 
     -- Blizzard chooses the voiced racial joke itself via JOKE (/silly).
@@ -463,6 +465,18 @@ function EmotaSpeak_TestJoke()
     NativeEmote("JOKE", "manual-settings-joke-test", true)
 end
 
+-- Called by both the native settings checkboxes and slash commands.
+-- Re-arming from a toggle prevents an immediate joke when the user
+-- has been standing still for a long time with reactions disabled.
+function EmotaSpeak_OnSettingChanged(key)
+    if key ~= "auto" and key ~= "idleAuto" then return end
+    EndIdle()
+    if settings and settings.auto and settings.idleAuto and type(IsPlayerMoving) == "function" then
+        local moving = IsPlayerMoving()
+        if not Hidden(moving) and not moving then StartIdle() end
+    end
+end
+
 SLASH_EMOTASPEAK1 = "/emota"
 SlashCmdList.EMOTASPEAK = function(message)
     if not settings then return end
@@ -473,6 +487,7 @@ SlashCmdList.EMOTASPEAK = function(message)
         end
     elseif command == "auto" and (arg == "on" or arg == "off") then
         settings.auto = arg == "on"
+        EmotaSpeak_OnSettingChanged("auto")
         Note("Automatic native-emote attempts: " .. (settings.auto and "ON (experimental)" or "OFF"), true)
     elseif command == "debug" and (arg == "on" or arg == "off") then
         settings.debug = arg == "on"
@@ -489,6 +504,7 @@ SlashCmdList.EMOTASPEAK = function(message)
     elseif command == "idle" then
         if arg == "on" or arg == "off" then
             settings.idleAuto = arg == "on"
+            EmotaSpeak_OnSettingChanged("idleAuto")
             Note("Idle jokes: " .. (settings.idleAuto and "ON" or "OFF") ..
                 " (master /emota auto must also be enabled)", true)
         elseif arg == "test" then
