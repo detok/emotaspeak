@@ -1,0 +1,48 @@
+name: Validate and package EmotaSpeak
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Lua parser
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y lua5.1
+      - name: Verify Lua syntax
+        run: |
+          luac5.1 -p EmotaSpeak.lua
+          luac5.1 -p EmotaSpeak_Settings.lua
+      - name: Package addon
+        run: python3 scripts/package.py
+      - name: Validate release contents
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          files=list(Path("publish").glob("EmotaSpeak-*.zip"))
+          assert len(files)==1, files
+          with ZipFile(files[0]) as z:
+              names=set(z.namelist())
+          required={"EmotaSpeak/"+path for path in (
+              "EmotaSpeak.toc", "EmotaSpeak_Camelot.toc",
+              "EmotaSpeak.lua", "EmotaSpeak_Settings.lua",
+              "assets/Icon.tga")}
+          assert names == required, (sorted(names),sorted(required))
+          print("Validated", files[0])
+          PY
+      - name: Upload ready-to-test Forever ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: EmotaSpeak-Forever
+          path: publish/EmotaSpeak-*.zip
+          if-no-files-found: error
