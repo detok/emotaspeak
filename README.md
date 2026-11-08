@@ -2,7 +2,7 @@
 
 A context-sensitive character immersion addon for **World of Warcraft: Forever**.
 
-**Status: experimental v0.1.1.** A user has confirmed that a manually initiated wave and an automatic post-combat TRAIN emote play in Forever. Other event handlers still need live testing. Native calls may return `false` even when the animation visibly plays; that return value is logged as diagnostics rather than definitive failure.
+**Status: experimental v0.2.0.** A user has confirmed that a manually initiated wave and an automatic post-combat TRAIN emote play in Forever. Other event handlers still need live testing. Native calls may return `false` even when the animation visibly plays; that return value is logged as diagnostics rather than definitive failure.
 
 ## Install
 
@@ -20,6 +20,9 @@ Copy this repository into `World of Warcraft/_forever_/Interface/AddOns/EmotaSpe
 - `/emota lowhealth` — inspect the native red health-warning frame's state (shown/hidden/secret/ambiguous)
 - `/emota lowhealth on` — **optionally** test a `HEALME` reaction when the public native low-health border transitions from hidden to shown; also requires `/emota auto on`
 - `/emota lowhealth off` — disable the experimental warning reaction (default)
+- `/emota idle` — show how long you've been stationary
+- `/emota idle on` / `/emota idle off` — toggle ambient idle jokes (enabled by default, but only works when `/emota auto on`)
+- `/emota idle test` — manually perform Blizzard's voiced racial joke (`JOKE`, equivalent to `/silly`)
 
 ## Implemented reactions (not all tested in game)
 
@@ -35,6 +38,18 @@ Copy this repository into `World of Warcraft/_forever_/Interface/AddOns/EmotaSpe
 - `QUEST_TURNED_IN`: rare `CHEER`.
 - `PLAYER_UNGHOST`: occasional `SIGH`.
 - `UNIT_HEALTH`: low-health percentage **only when it is readable outside combat**.
+
+## Ambient jokes while standing still (v0.2.0)
+
+EmotaSpeak listens to `PLAYER_STARTED_MOVING` and `PLAYER_STOPPED_MOVING`, with a small `C_Timer.NewTicker` check every 5 seconds. After **60–110 seconds** standing still, it gets **one 45% chance** to trigger the built-in voiced `JOKE` emote (Blizzard chooses the actual racial /silly voice line). There is no generated speech or outgoing /say text.
+
+- Only one roll per stopped period; starting movement resets it.
+- At least 10 minutes between idle rolls, with a 2-minute quiet period after other emote attempts.
+- Suppressed in combat, while AFK, dead, mounted, on a taxi, or using a common trade/vendor/bank/mail window.
+- User-configurable with `/emota idle on/off`. Master `/emota auto on` still controls all automatic attempts.
+- In debug mode, you see when the idle timer starts and whether the roll produced a joke. Routine `PerformEmote` return values are no longer printed because Forever has visibly played the animations despite returning `false`; actual Lua errors/restrictions still appear.
+
+The event-based movement signal and the voiced `JOKE` token are documented in WoW's API. The automated trigger still needs in-game confirmation on Forever.
 
 ## Native red-screen experiment (v0.1.1)
 
@@ -52,8 +67,16 @@ See [FEASIBILITY.md](FEASIBILITY.md) for documented API decisions and validation
 
 ## Development
 
+v0.2.0 = randomized 60–110-second idle joke with movement events, anti-spam rules, and quiet native-emote diagnostics.
+
 v0.1.1 = native LowHealthFrame diagnostic, optionally activated HEALME on confirmed non-secret visual transitions; no health math or restricted-state workaround.
 
 v0.1.0 = observed working manual wave and automatic post-fight train from v0.0.1, expanded event recognition, optional social responses, rare quest/rez reactions, corrected diagnostics. Still experimental. Keep `/emota debug on` for testing; with `/emota auto on`, emotes are rate-limited to at most one native attempt every 45 seconds, with at least two minutes between the same reason. Targeted wave replies additionally require five minutes between replies. These are intentional anti-spam defaults.
 
 **How to test:** after updating, `/reload`; use `/emota status` to check whether auto is enabled. Attempt a spell you cannot afford, complete a trade, and have a friend wave directly at your character. Check both the in-game action and debug text. No chat replies are generated and no combat percentage measurements are attempted.
+
+## API references for idle behavior
+
+- [PLAYER_STARTED_MOVING / PLAYER_STOPPED_MOVING](https://warcraft.wiki.gg/wiki/Events/Names)
+- [C_Timer.NewTicker](https://warcraft.wiki.gg/wiki/API:C_Timer.NewTicker)
+- [JOKE token /silly](https://warcraft.wiki.gg/wiki/EmoteToken)
