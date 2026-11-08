@@ -1,5 +1,5 @@
--- EmotaSpeak v0.0.1 — WoW Forever API probe
--- This is intentionally a diagnostic-first addon. Auto-emotes are OPT-IN.
+-- EmotaSpeak v0.1.0 — WoW Forever contextual emote probe
+-- Diagnostic-first character-immersion addon. Auto-emotes are OPT-IN.
 -- No custom /e, outgoing chat, combat log, or forbidden secret-value calculations.
 
 local addonName = ...
