@@ -1,4 +1,4 @@
--- EmotaSpeak v0.2.0 — WoW Forever contextual emotes
+-- EmotaSpeak v0.3.0 — WoW Forever contextual emotes
 -- Diagnostic-first character-immersion addon. Auto-emotes are OPT-IN.
 -- No custom /e, outgoing chat, combat log, or forbidden secret-value calculations.
 
@@ -14,10 +14,10 @@ local lastByReason = {}
 local lowHPNoted = false
 local lastLowHealthFrameState = nil
 local lowHealthScanQueued = false
+-- Per-login session pacing; intentionally not written to SavedVariables.
 local idleSince = nil
 local idleAfterSeconds = nil
-local idleCheckedThisStop = false
-local lastIdleRoll = -1e8
+local sessionJokeCount = 0
 local idleTicker = nil
 
 local function Hidden(value)
@@ -134,17 +134,27 @@ end
 
 -- Low-frequency idle behavior, driven by movement events rather than HP or combat data.
 -- One random roll per stationary period, after a randomized delay.
+-- Growing, randomly staggered intervals through a single play session.
+-- First joke: ~1 minute. Second: 1–3m. Later: up to 5–10m.
+local function NextIdleDelay()
+    if sessionJokeCount == 0 then return 60 end
+    if sessionJokeCount == 1 then return math.random(60, 180) end
+    if sessionJokeCount == 2 then return math.random(90, 240) end
+    if sessionJokeCount == 3 then return math.random(150, 360) end
+    if sessionJokeCount == 4 then return math.random(240, 480) end
+    return math.random(300, 600)
+end
+
 local function StartIdle()
     idleSince = GetTime()
-    idleAfterSeconds = math.random(60, 110)
-    idleCheckedThisStop = false
-    Note(("Idle timer started; chance window in %ds"):format(idleAfterSeconds))
+    idleAfterSeconds = NextIdleDelay()
+    Note(("Idle window begins; next joke in %ds (session jokes: %d)"):format(
+        idleAfterSeconds, sessionJokeCount))
 end
 
 local function EndIdle()
     idleSince = nil
     idleAfterSeconds = nil
-    idleCheckedThisStop = false
 end
 
 local function IdleIsSafe()
@@ -187,28 +197,17 @@ end
 
 local function CheckIdle()
     if not settings or not settings.auto or not settings.idleAuto then return end
-    if not idleSince or idleCheckedThisStop then return end
-
-    -- If the player enters combat, postpone any ambient reaction until a
-    -- fresh full idle interval begins after combat ends.
-    if InCombatLockdown() then return end
+    if not idleSince or not idleAfterSeconds then return end
     if GetTime() - idleSince < idleAfterSeconds then return end
-    if GetTime() - lastIdleRoll < 600 then return end
-
-    -- Do not interrupt a recent meaningful social or combat reaction.
     if GetTime() - lastAttempt < 120 then return end
     if not IdleIsSafe() then return end
 
-    idleCheckedThisStop = true
-    lastIdleRoll = GetTime()
-
-    -- WoW itself chooses which voiced racial /silly joke is heard.
-    if math.random(100) <= 45 then
-        Note("Idle reaction: trying a randomly voiced racial joke.")
-        React("JOKE", "idle-joke", 1.0)
-    else
-        Note("Idle roll: staying quiet this time.")
-    end
+    -- Blizzard chooses the voiced racial joke itself via JOKE (/silly).
+    Note("Idle personality: requesting a voiced joke.")
+    NativeEmote("JOKE", "idle-joke", false)
+    sessionJokeCount = sessionJokeCount + 1
+    -- Still standing? Schedule another with a longer random gap.
+    StartIdle()
 end
 
 local function MaybeWaveBack(text, sender, target)
@@ -460,11 +459,19 @@ for _, event in ipairs({
     frame:RegisterEvent(event)
 end
 
+function EmotaSpeak_TestJoke()
+    NativeEmote("JOKE", "manual-settings-joke-test", true)
+end
+
 SLASH_EMOTASPEAK1 = "/emota"
 SlashCmdList.EMOTASPEAK = function(message)
     if not settings then return end
     local command, arg = strsplit(" ", string.lower(message or ""))
-    if command == "auto" and (arg == "on" or arg == "off") then
+    if command == "" or command == "settings" or command == "config" then
+        if EmotaSpeak_OpenSettings then EmotaSpeak_OpenSettings() else
+            Note("Settings panel not available; use /emota auto on/off.", true)
+        end
+    elseif command == "auto" and (arg == "on" or arg == "off") then
         settings.auto = arg == "on"
         Note("Automatic native-emote attempts: " .. (settings.auto and "ON (experimental)" or "OFF"), true)
     elseif command == "debug" and (arg == "on" or arg == "off") then
@@ -473,7 +480,8 @@ SlashCmdList.EMOTASPEAK = function(message)
     elseif command == "status" then
         Note("auto=" .. tostring(settings.auto) .. ", debug=" .. tostring(settings.debug) ..
             ", combat=" .. tostring(inCombat) .. ", lowHealthAuto=" .. tostring(settings.lowHealthAuto) ..
-            ", idleAuto=" .. tostring(settings.idleAuto), true)
+            ", idleAuto=" .. tostring(settings.idleAuto) ..
+            ", sessionJokes=" .. sessionJokeCount, true)
     elseif command == "test" then
         NativeEmote("WAVE", "manual-test", true)
     elseif command == "health" then
@@ -485,10 +493,18 @@ SlashCmdList.EMOTASPEAK = function(message)
                 " (master /emota auto must also be enabled)", true)
         elseif arg == "test" then
             NativeEmote("JOKE", "manual-idle-joke-test", true)
+        elseif arg == "reset" then
+            sessionJokeCount = 0
+            EndIdle()
+            if type(IsPlayerMoving) == "function" then
+                local moving = IsPlayerMoving()
+                if not Hidden(moving) and not moving then StartIdle() end
+            end
+            Note("Idle personality pacing reset for this session.", true)
         else
             local timer = idleSince and math.floor(GetTime() - idleSince) or 0
-            Note(("Idle timer: %ds; pending: %s; idle reactions: %s"):format(
-                timer, tostring(idleSince ~= nil and not idleCheckedThisStop), tostring(settings.idleAuto)), true)
+            Note(("Idle for %ds; next scheduled after %ss; jokes this session: %d; enabled: %s"):format(
+                timer, tostring(idleAfterSeconds or "-"), sessionJokeCount, tostring(settings.idleAuto)), true)
         end
     elseif command == "lowhealth" then
         if arg == "on" or arg == "off" then
@@ -501,6 +517,6 @@ SlashCmdList.EMOTASPEAK = function(message)
                 " (also requires /emota auto on)", true)
         end
     else
-        Note("Commands: /emota status | debug on/off | auto on/off | idle [on/off/test] | test | health | lowhealth [on/off]", true)
+        Note("Commands: /emota [settings] | status | debug on/off | auto on/off | idle [on/off/test/reset] | test | health | lowhealth [on/off]", true)
     end
 end
