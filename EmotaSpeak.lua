@@ -8,7 +8,8 @@ local settings
 local inCombat = false
 local combatStarted = 0
 local guidToCompanion = {}
-local lastAttempt = 0
+local lastAttempt = -1e8
+local lastWaveReply = -1e8
 local lastByReason = {}
 local lowHPNoted = false
 
@@ -62,7 +63,7 @@ local function ReportHealth()
     end
 end
 
-local function NativeEmote(token, reason, manual)
+local function NativeEmote(token, reason, manual, targetName)
     if not C_ChatInfo or not C_ChatInfo.PerformEmote then
         Note("C_ChatInfo.PerformEmote does not exist in this client.", true)
         return
@@ -95,21 +96,47 @@ local function NativeEmote(token, reason, manual)
     end
 
     -- pcall catches a Lua error; it does NOT bypass a protected-action rule.
-    local ok, accepted = pcall(C_ChatInfo.PerformEmote, token)
-    if ok then
-        Note(("%s -> %s: %s"):format(reason, token, tostring(accepted)), true)
+    local ok, returned
+    if targetName then
+        ok, returned = pcall(C_ChatInfo.PerformEmote, token, targetName)
     else
-        Note(("%s -> %s: API error/restriction"):format(reason, token), true)
+        ok, returned = pcall(C_ChatInfo.PerformEmote, token)
+    end
+    if ok then
+        -- Forever may visibly perform an emote even when the API returns false.
+        Note(("%s -> %s: API returned %s (check animation)"):format(
+            reason, token, tostring(returned)), settings.debug or manual)
+    else
+        Note(("%s -> %s: API raised an error or restriction"):format(reason, token), true)
     end
 end
 
-local function React(token, reason, chance)
+local function React(token, reason, chance, targetName)
     if not settings or not settings.auto then
         return
     end
     if math.random() <= chance then
-        NativeEmote(token, reason, false)
+        NativeEmote(token, reason, false, targetName)
     end
+end
+
+-- Only replies to an English /wave clearly directed at our character.
+-- No reply to untargeted emotes, our own emotes or another LivingSoul user
+-- repeatedly responding: the 5-minute social lock prevents ping-pong loops.
+local function MaybeWaveBack(text, sender, target)
+    if not settings or not settings.auto or InCombatLockdown() then return end
+    if not text or not sender or Hidden(text) or Hidden(sender) or Hidden(target) then return end
+    if GetLocale() ~= "enUS" and GetLocale() ~= "enGB" then return end
+    local me = UnitName("player")
+    if not me or sender == me or sender:match("^[^-]+") == me then return end
+    local targetIsMe = target and (target == me or target:match("^[^-]+") == me)
+    local isWaveToMe = text:lower():find("waves at you", 1, true)
+    if not targetIsMe or not isWaveToMe then return end
+    local now = GetTime()
+    if now - lastWaveReply < 300 then return end
+    lastWaveReply = now
+    Note("Targeted /wave from " .. sender .. " detected.")
+    React("WAVE", "wave-return", 1.0, sender)
 end
 
 local function OnDeath(guid)
@@ -170,9 +197,27 @@ local function OnEvent(_, event, ...)
         OnDeath(...)
     elseif event == "UI_ERROR_MESSAGE" then
         local errorID, message = ...
-        if message and not Hidden(message) and ERR_OUT_OF_MANA and message == ERR_OUT_OF_MANA then
-            Note("Out-of-mana cast failure detected.")
-            React("OOM", "oom-cast-error", 1.0)
+        if message and not Hidden(message) then
+            if ERR_OUT_OF_MANA and message == ERR_OUT_OF_MANA then
+                Note("A cast failed because there was not enough mana.")
+                React("OOM", "oom-cast-error", 1.0)
+            elseif ERR_OUT_OF_FOCUS and message == ERR_OUT_OF_FOCUS then
+                Note("An ability failed because there was not enough focus.")
+                React("SIGH", "focus-cast-error", 0.25)
+            elseif ERR_OUT_OF_ENERGY and message == ERR_OUT_OF_ENERGY then
+                Note("An ability failed because there was not enough energy.")
+                React("SIGH", "energy-cast-error", 0.2)
+            end
+        end
+    elseif event == "UI_INFO_MESSAGE" then
+        local infoID, message = ...
+        if message and not Hidden(message) then
+            if ERR_TRADE_COMPLETE and message == ERR_TRADE_COMPLETE then
+                Note("Trade completed successfully.")
+                React("BOW", "trade-complete", 0.85)
+            elseif ERR_TRADE_CANCELLED and message == ERR_TRADE_CANCELLED then
+                Note("Trade was canceled; no emote.")
+            end
         end
     elseif event == "UNIT_COMBAT" then
         local unit, combatEvent = ...
@@ -208,9 +253,15 @@ local function OnEvent(_, event, ...)
     elseif event == "PLAYER_LEVEL_UP" then
         Note("Level up!")
         React("CHEER", "level-up", 1.0)
+    elseif event == "QUEST_TURNED_IN" then
+        Note("Quest turned in.")
+        React("CHEER", "quest-turn-in", 0.12)
+    elseif event == "PLAYER_UNGHOST" then
+        Note("Returned from ghost form.")
+        React("SIGH", "resurrection", 0.65)
     elseif event == "CHAT_MSG_TEXT_EMOTE" then
-        -- Social response parsing must be separately validated per locale/client.
-        Note("Observed a nearby text emote; no automatic social reply yet.")
+        local text, sender, _, _, target = ...
+        MaybeWaveBack(text, sender, target)
     elseif event == "ADDON_ACTION_BLOCKED" or event == "ADDON_ACTION_FORBIDDEN" then
         local sourceAddon, functionName = ...
         if sourceAddon == addonName then
@@ -222,9 +273,10 @@ end
 frame:SetScript("OnEvent", OnEvent)
 for _, event in ipairs({
     "ADDON_LOADED", "PLAYER_ENTERING_WORLD", "GROUP_ROSTER_UPDATE", "UNIT_PET",
-    "UNIT_DIED", "UI_ERROR_MESSAGE", "UNIT_COMBAT", "UNIT_SPELLCAST_INTERRUPTED",
+    "UNIT_DIED", "UI_ERROR_MESSAGE", "UI_INFO_MESSAGE", "UNIT_COMBAT", "UNIT_SPELLCAST_INTERRUPTED",
     "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED", "UNIT_HEALTH",
-    "PLAYER_LEVEL_UP", "CHAT_MSG_TEXT_EMOTE", "ADDON_ACTION_BLOCKED",
+    "PLAYER_LEVEL_UP", "QUEST_TURNED_IN", "PLAYER_UNGHOST",
+    "CHAT_MSG_TEXT_EMOTE", "ADDON_ACTION_BLOCKED",
     "ADDON_ACTION_FORBIDDEN",
 }) do
     frame:RegisterEvent(event)
