@@ -488,7 +488,7 @@ SlashCmdList.EMOTASPEAK = function(message)
         else
             local timer = idleSince and math.floor(GetTime() - idleSince) or 0
             Note(("Idle timer: %ds; pending: %s; idle reactions: %s"):format(
-                timer, tostring(not idleCheckedThisStop), tostring(settings.idleAuto)), true)
+                timer, tostring(idleSince ~= nil and not idleCheckedThisStop), tostring(settings.idleAuto)), true)
         end
     elseif command == "lowhealth" then
         if arg == "on" or arg == "off" then
