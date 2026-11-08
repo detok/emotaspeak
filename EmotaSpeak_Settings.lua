@@ -60,6 +60,7 @@ local function Check(key, title, description, y)
         local db = Database()
         if not db then return end
         db[key] = not not self:GetChecked()
+        if EmotaSpeak_OnSettingChanged then EmotaSpeak_OnSettingChanged(key) end
         Refresh()
     end)
 end
@@ -94,6 +95,7 @@ panel.OnDefault = function()
     db.idleAuto = true
     db.debug = false
     db.lowHealthAuto = false
+    if EmotaSpeak_OnSettingChanged then EmotaSpeak_OnSettingChanged("auto") end
     Refresh()
 end
 panel:SetScript("OnShow", Refresh)
