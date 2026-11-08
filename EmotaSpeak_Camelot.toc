@@ -1,8 +1,11 @@
 ## Interface: 16001
 ## Title: EmotaSpeak
-## Notes: Context-aware, rare immersion emotes for WoW Forever
-## Author: Detok
-## Version: 0.2.0
+## Notes: Natural, occasional character reactions and voiced idle jokes.
+## Author: Detok Whitemaine
+## Version: 0.3.0
+## IconTexture: Interface\AddOns\EmotaSpeak\assets\Icon
+## AddonCompartmentFunc: EmotaSpeak_OnAddonCompartmentClick
 ## SavedVariablesPerCharacter: EmotaSpeakDB
 
 EmotaSpeak.lua
+EmotaSpeak_Settings.lua
