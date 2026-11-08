@@ -1,82 +1,104 @@
 # EmotaSpeak
 
-A context-sensitive character immersion addon for **World of Warcraft: Forever**.
+**Your character, a little more alive.**  
+An event-driven character immersion addon for **World of Warcraft: Forever**.
 
-**Status: experimental v0.2.0.** A user has confirmed that a manually initiated wave and an automatic post-combat TRAIN emote play in Forever. Other event handlers still need live testing. Native calls may return `false` even when the animation visibly plays; that return value is logged as diagnostics rather than definitive failure.
+EmotaSpeak gives your character subtle, occasional reactions to the things that happen in Azeroth: a pet dying, a companion falling, a successful trade, an interrupted cast, or simply standing around long enough to tell a voiced joke. It uses Blizzard's built-in emotes—**no AI chat, no spammy dialogue generator, no gameplay automation**.
 
-## Install
+> **Version 0.3.0 — experimental Forever release.** A manual wave and automatic TRAIN reaction have been observed working on the Forever client. The new settings panel, variable idle scheduling, and other event combinations still need in-game validation before a public CurseForge release.
 
-Copy this repository into `World of Warcraft/_forever_/Interface/AddOns/EmotaSpeak/`. The directory must contain `EmotaSpeak_Camelot.toc` and `EmotaSpeak.lua`. Enable it from the in-game AddOns menu and reload.
+## At a glance
 
-## In-game commands
+| | |
+|---|---|
+| Game | World of Warcraft: Forever 1.60.1 |
+| Interface number | `16001` |
+| Dependencies | None |
+| Author | Detok Whitemaine |
+| Controls | Game Settings → AddOns → EmotaSpeak, the Addon Compartment beside the minimap, or `/emota` |
+| Saves | Per-character settings; session joke pacing resets on login/reload |
+| Privacy | No outgoing custom chat text, network requests, collection, or telemetry |
 
-- `/emota status` — current diagnostics and auto mode
-- `/emota debug on` — print detected event signals locally (does not send chat)
-- `/emota debug off` — silence local diagnostics
-- `/emota auto on` — **opt in** to trying native emotes from detected events
-- `/emota auto off` — disable automatic attempts (default)
-- `/emota test` — manually request a `WAVE` emote to prove the API exists
-- `/emota health` — report whether health and mana values are accessible or secret
-- `/emota lowhealth` — inspect the native red health-warning frame's state (shown/hidden/secret/ambiguous)
-- `/emota lowhealth on` — **optionally** test a `HEALME` reaction when the public native low-health border transitions from hidden to shown; also requires `/emota auto on`
-- `/emota lowhealth off` — disable the experimental warning reaction (default)
-- `/emota idle` — show how long you've been stationary
-- `/emota idle on` / `/emota idle off` — toggle ambient idle jokes (enabled by default, but only works when `/emota auto on`)
-- `/emota idle test` — manually perform Blizzard's voiced racial joke (`JOKE`, equivalent to `/silly`)
+## What it does
 
-## Implemented reactions (not all tested in game)
+- **Social manners:** can return a targeted wave and bow after a successful trade.
+- **Companionship:** can mourn your pet or a party/raid member when a readable death event identifies them.
+- **Adventuring:** occasional post-combat `TRAIN`, level-up cheers, quest-completion celebrations, and interrupted-cast sighs.
+- **Resource frustration:** reacts to a *cast that fails for insufficient mana* with `OOM`; no need to read protected in-combat mana values.
+- **Ambient personality:** a voiced racial `JOKE` (the familiar `/silly`) after your character has stood still for a while.
+- **Quiet by design:** per-reaction cooldowns, a global cooldown, and activity checks prevent constant chatter.
 
-- `UI_ERROR_MESSAGE` / localized `ERR_OUT_OF_MANA`: a failed cast due to insufficient mana attempts `OOM`. This is not a mana percentage check.
-- `ERR_OUT_OF_FOCUS` and `ERR_OUT_OF_ENERGY`: rare `SIGH` after a resource-related failed cast.
-- `UNIT_DIED`: player pet or mapped party/raid member death, subject to GUID secrecy.
-- `UNIT_COMBAT`: the player's dodge, block and parry events.
-- `UNIT_SPELLCAST_INTERRUPTED`: interrupted player cast.
-- `PLAYER_REGEN_DISABLED` and `PLAYER_REGEN_ENABLED`: combat start/end (not kill count).
-- `PLAYER_LEVEL_UP`: `CHEER` on leveling.
-- `UI_INFO_MESSAGE` / `ERR_TRADE_COMPLETE`: likely `BOW` after an actually successful trade, not just a closed trade window.
-- `CHAT_MSG_TEXT_EMOTE`: English-only targeted "/wave" reply with a five-minute anti-loop lock; requires target name and the phrase "waves at you".
-- `QUEST_TURNED_IN`: rare `CHEER`.
-- `PLAYER_UNGHOST`: occasional `SIGH`.
-- `UNIT_HEALTH`: low-health percentage **only when it is readable outside combat**.
+### Idle jokes: a growing interval, not a repeating spam timer
 
-## Ambient jokes while standing still (v0.2.0)
+Idle jokes use your character's own voiced lines; Blizzard picks which joke is heard. Jokes are scheduled after **continuous standing still**, and each one pushes the next scheduled interval farther into the session.
 
-EmotaSpeak listens to `PLAYER_STARTED_MOVING` and `PLAYER_STOPPED_MOVING`, with a small `C_Timer.NewTicker` check every 5 seconds. After **60–110 seconds** standing still, it gets **one 45% chance** to trigger the built-in voiced `JOKE` emote (Blizzard chooses the actual racial /silly voice line). There is no generated speech or outgoing /say text.
+| Joke in this session | Stationary time before next joke |
+|---|---|
+| First | 60 seconds |
+| Second | Randomly 60–180 seconds |
+| Third | Randomly 90–240 seconds |
+| Fourth | Randomly 150–360 seconds |
+| Fifth | Randomly 240–480 seconds |
+| Sixth and later | Randomly 300–600 seconds |
 
-- Only one roll per stopped period; starting movement resets it.
-- At least 10 minutes between idle rolls, with a 2-minute quiet period after other emote attempts.
-- Suppressed in combat, while AFK, dead, mounted, on a taxi, or using a common trade/vendor/bank/mail window.
-- User-configurable with `/emota idle on/off`. Master `/emota auto on` still controls all automatic attempts.
-- In debug mode, you see when the idle timer starts and whether the roll produced a joke. Routine `PerformEmote` return values are no longer printed because Forever has visibly played the animations despite returning `false`; actual Lua errors/restrictions still appear.
+Moving, mounting, entering combat, and certain interactions postpone idle jokes; the session's count **does not restart when you move**. Combat and other important reactions take priority. The master switch still controls all automation. The timing resets on login or `/reload` (not merely on movement).
 
-The event-based movement signal and the voiced `JOKE` token are documented in WoW's API. The automated trigger still needs in-game confirmation on Forever.
+### Settings in the game
 
-## Native red-screen experiment (v0.1.1)
+Open the standard **Game Menu → Options → AddOns → EmotaSpeak** panel, click EmotaSpeak in the **Addon Compartment** next to the minimap, or type `/emota`.
 
-Blizzard includes a built-in `LowHealthFrame` visual, and ZSBT publicly documents using its visibility for a warning sound. Hearth UI's description documents a different, visual-only approach using a secret-safe curve. Our implementation was independently written and does not copy either addon.
+The small settings screen provides:
 
-The frame can also show for certain **fullscreen** edge flashes. EmotaSpeak excludes fullscreen-panel cases when possible, refuses secret states, and treats unverifiable/fullscreen signals as **ambiguous**, never a reason to emote. It does not call Blizzard's health evaluator or read/compare secret health numbers. It samples once after Blizzard's `UNIT_HEALTH` or combat-state events. `/emota lowhealth` is a local diagnostic; no automatic low-health emote is attempted unless you explicitly enable both `/emota auto on` and `/emota lowhealth on`.
+- **Enable character reactions:** master toggle.
+- **Occasional voiced jokes:** enable/disable ambient jokes independently.
+- **Diagnostic messages:** show the technical events only when troubleshooting.
+- **Test a voiced joke:** a user-initiated, audible demo.
 
-**Important:** Retail source and other addon behavior cannot establish whether `LowHealthFrame:IsShown()` returns a public boolean in the live Forever client. Test by typing `/emota lowhealth` at normal HP and again after the screen flashes red, optionally with `/emota debug on`. A `secret`, `missing`, or `ambiguous` result means the automatic path isn't validated.
+Settings are saved per character. The menu and existing slash commands update the same saved settings.
 
-## Critical limits
+## Installation
 
-Forever inherits the Midnight addon restrictions. Health and primary resource values may be secret during combat; do not perform arithmetic/comparisons on secret values. There is no supported workaround for an exact in-combat low-HP trigger. The old combat-log event is unavailable. `C_ChatInfo.PerformEmote` may fail depending on the combat/action restriction state and execution context. The addon never uses custom /e text or sends /say, whispers or party chat.
+1. Copy or extract the addon to `World of Warcraft/_forever_/Interface/AddOns/EmotaSpeak/`.
+2. Ensure the folder contains both `EmotaSpeak.lua` and `EmotaSpeak_Settings.lua`, the `EmotaSpeak_Camelot.toc` manifest, and `assets/Icon.tga`.
+3. **Fully restart WoW** after adding or changing the manifest or texture. For Lua-only changes, `/reload` is usually sufficient.
+4. Enable **EmotaSpeak** in the character-select AddOns list.
 
-See [FEASIBILITY.md](FEASIBILITY.md) for documented API decisions and validation steps. No use of protected actions or restriction bypasses.
+A release ZIP may be built with `python scripts/package.py`. It produces `publish/EmotaSpeak-0.3.0.zip` with the correctly named `EmotaSpeak/` folder. Do not install GitHub's source ZIP without renaming its directory.
 
-## Development
+## Slash commands
 
-v0.2.0 = randomized 60–110-second idle joke with movement events, anti-spam rules, and quiet native-emote diagnostics.
+| Command | Purpose |
+|---|---|
+| `/emota` or `/emota settings` | Open the settings panel |
+| `/emota auto on` / `off` | Enable or disable all automatic reactions |
+| `/emota idle on` / `off` | Enable or disable ambient voiced jokes |
+| `/emota idle` | See current idle interval and session joke count |
+| `/emota idle reset` | Reset the progressively growing session interval (for testing) |
+| `/emota idle test` | Manually play a voiced `JOKE` emote |
+| `/emota debug on` / `off` | Toggle local diagnostics |
+| `/emota status` | See active settings |
+| `/emota test` | Manually wave |
+| `/emota health` | Show whether health/power values are readable |
+| `/emota lowhealth` | Inspect Blizzard's red low-health border (experimental, diagnostic only by default) |
+| `/emota lowhealth on` / `off` | Explicitly opt in/out of unverified native low-health reaction |
 
-v0.1.1 = native LowHealthFrame diagnostic, optionally activated HEALME on confirmed non-secret visual transitions; no health math or restricted-state workaround.
+New installs default to automatic reactions **off**. Once enabled, idle jokes default to on. Low-health automation remains **off** by default.
 
-v0.1.0 = observed working manual wave and automatic post-fight train from v0.0.1, expanded event recognition, optional social responses, rare quest/rez reactions, corrected diagnostics. Still experimental. Keep `/emota debug on` for testing; with `/emota auto on`, emotes are rate-limited to at most one native attempt every 45 seconds, with at least two minutes between the same reason. Targeted wave replies additionally require five minutes between replies. These are intentional anti-spam defaults.
+## Compatibility and limitations
 
-**How to test:** after updating, `/reload`; use `/emota status` to check whether auto is enabled. Attempt a spell you cannot afford, complete a trade, and have a friend wave directly at your character. Check both the in-game action and debug text. No chat replies are generated and no combat percentage measurements are attempted.
+WoW Forever protects health and resource data in combat. EmotaSpeak does **not** calculate secret health percentages, reconstruct hidden combat data, cast spells, move your character, or generate chat messages.
 
-## API references for idle behavior
+The experimental `LowHealthFrame` probe only inspects the native red edge when a non-secret, unambiguous frame state can be read. This remains an **unverified experiment**, not a supported low-HP warning feature. Some emotes may return `false` even when the animation plays; EmotaSpeak no longer prints that misleading value as a gameplay failure.
 
-- [PLAYER_STARTED_MOVING / PLAYER_STOPPED_MOVING](https://warcraft.wiki.gg/wiki/Events/Names)
-- [C_Timer.NewTicker](https://warcraft.wiki.gg/wiki/API:C_Timer.NewTicker)
-- [JOKE token /silly](https://warcraft.wiki.gg/wiki/EmoteToken)
+The addon detects some reactions based on localized UI messages, and targeted wave matching currently assumes English client text. Group member death detection depends on readable GUIDs. The long-fight celebration is based on **time in combat**, not an exact enemy kill count.
+
+Please report issues with the game build, reproduction steps, and any messages from `/emota debug on`. See [FEASIBILITY.md](FEASIBILITY.md) for API test notes and known restrictions.
+
+## Publishing / branding
+
+- `assets/Icon.tga`: original, custom in-game icon shown in the AddOns list and Addon Compartment.
+- `scripts/package.py`: reproducible CurseForge ZIP packager using Python's standard library only.
+- `CURSEFORGE.md`: prepared listing copy, category guidance, and first release checklist.
+- `CHANGELOG.md`: release notes.
+
+This project is independent and not affiliated with or endorsed by Blizzard Entertainment. World of Warcraft is a trademark of Blizzard Entertainment.
