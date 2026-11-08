@@ -1,4 +1,4 @@
--- EmotaSpeak v0.1.1 — WoW Forever contextual emote probe
+-- EmotaSpeak v0.2.0 — WoW Forever contextual emotes
 -- Diagnostic-first character-immersion addon. Auto-emotes are OPT-IN.
 -- No custom /e, outgoing chat, combat log, or forbidden secret-value calculations.
 
@@ -14,6 +14,11 @@ local lastByReason = {}
 local lowHPNoted = false
 local lastLowHealthFrameState = nil
 local lowHealthScanQueued = false
+local idleSince = nil
+local idleAfterSeconds = nil
+local idleCheckedThisStop = false
+local lastIdleRoll = -1e8
+local idleTicker = nil
 
 local function Hidden(value)
     return value ~= nil and type(issecretvalue) == "function" and issecretvalue(value)
@@ -105,9 +110,10 @@ local function NativeEmote(token, reason, manual, targetName)
         ok, returned = pcall(C_ChatInfo.PerformEmote, token)
     end
     if ok then
-        -- Forever may visibly perform an emote even when the API returns false.
-        Note(("%s -> %s: API returned %s (check animation)"):format(
-            reason, token, tostring(returned)), settings.debug or manual)
+        -- A false return was observed even when Forever visibly played WAVE/TRAIN.
+        -- Do not label this harmless return as an error or spam it in chat.
+        -- It remains an observation, not proof of successful playback.
+        Note(("Emote requested: %s (%s)"):format(token, reason), manual)
     else
         Note(("%s -> %s: API raised an error or restriction"):format(reason, token), true)
     end
@@ -125,6 +131,86 @@ end
 -- Only replies to an English /wave clearly directed at our character.
 -- No reply to untargeted emotes, our own emotes or another LivingSoul user
 -- repeatedly responding: the 5-minute social lock prevents ping-pong loops.
+
+-- Low-frequency idle behavior, driven by movement events rather than HP or combat data.
+-- One random roll per stationary period, after a randomized delay.
+local function StartIdle()
+    idleSince = GetTime()
+    idleAfterSeconds = math.random(60, 110)
+    idleCheckedThisStop = false
+    Note(("Idle timer started; chance window in %ds"):format(idleAfterSeconds))
+end
+
+local function EndIdle()
+    idleSince = nil
+    idleAfterSeconds = nil
+    idleCheckedThisStop = false
+end
+
+local function IdleIsSafe()
+    if InCombatLockdown() then return false end
+
+    -- A missed movement event shouldn't cause jokes while actively walking.
+    if type(IsPlayerMoving) == "function" then
+        local m = IsPlayerMoving()
+        if Hidden(m) or m then return false end
+    end
+
+    -- No talking while dead, away from the keyboard, mounted or traveling.
+    if type(UnitIsDeadOrGhost) == "function" then
+        local dead = UnitIsDeadOrGhost("player")
+        if Hidden(dead) or dead then return false end
+    end
+    if type(UnitIsAFK) == "function" then
+        local afk = UnitIsAFK("player")
+        if Hidden(afk) or afk then return false end
+    end
+    if type(IsMounted) == "function" then
+        local mounted = IsMounted()
+        if Hidden(mounted) or mounted then return false end
+    end
+    if type(UnitOnTaxi) == "function" then
+        local onTaxi = UnitOnTaxi("player")
+        if Hidden(onTaxi) or onTaxi then return false end
+    end
+
+    -- Avoid the immersion gag while dealing with a vendor or another player.
+    for _, uiName in ipairs({"MerchantFrame", "TradeFrame", "BankFrame", "MailFrame"}) do
+        local ui = _G[uiName]
+        if ui and ui.IsShown then
+            local visible = ui:IsShown()
+            if Hidden(visible) or visible then return false end
+        end
+    end
+    return true
+end
+
+local function CheckIdle()
+    if not settings or not settings.auto or not settings.idleAuto then return end
+    if not idleSince or idleCheckedThisStop then return end
+
+    -- If the player enters combat, postpone any ambient reaction until a
+    -- fresh full idle interval begins after combat ends.
+    if InCombatLockdown() then return end
+    if GetTime() - idleSince < idleAfterSeconds then return end
+    if GetTime() - lastIdleRoll < 600 then return end
+
+    -- Do not interrupt a recent meaningful social or combat reaction.
+    if GetTime() - lastAttempt < 120 then return end
+    if not IdleIsSafe() then return end
+
+    idleCheckedThisStop = true
+    lastIdleRoll = GetTime()
+
+    -- WoW itself chooses which voiced racial /silly joke is heard.
+    if math.random(100) <= 45 then
+        Note("Idle reaction: trying a randomly voiced racial joke.")
+        React("JOKE", "idle-joke", 1.0)
+    else
+        Note("Idle roll: staying quiet this time.")
+    end
+end
+
 local function MaybeWaveBack(text, sender, target)
     if not settings or not settings.auto or InCombatLockdown() then return end
     if not text or not sender or Hidden(text) or Hidden(sender) or Hidden(target) then return end
@@ -242,12 +328,29 @@ local function OnEvent(_, event, ...)
         EmotaSpeakDB.auto = EmotaSpeakDB.auto == true
         EmotaSpeakDB.debug = EmotaSpeakDB.debug == true
         EmotaSpeakDB.lowHealthAuto = EmotaSpeakDB.lowHealthAuto == true
+        -- Idle jokes are on when master auto is enabled, unless disabled explicitly.
+        EmotaSpeakDB.idleAuto = EmotaSpeakDB.idleAuto ~= false
         settings = EmotaSpeakDB
-        Note("Probe loaded. /emota help. Automatic emotes: OFF by default.", true)
+        if not idleTicker and C_Timer and C_Timer.NewTicker then
+            idleTicker = C_Timer.NewTicker(5, CheckIdle)
+        end
+        Note("EmotaSpeak loaded. /emota help. Automatic emotes: " ..
+            (settings.auto and "ON" or "OFF") .. ".", true)
 
     elseif event == "PLAYER_ENTERING_WORLD" or event == "GROUP_ROSTER_UPDATE" then
         RefreshCompanions()
         QueueLowHealthFrameSample()
+        if event == "PLAYER_ENTERING_WORLD" then
+            EndIdle()
+            if type(IsPlayerMoving) == "function" then
+                local moving = IsPlayerMoving()
+                if not Hidden(moving) and not moving then StartIdle() end
+            end
+        end
+    elseif event == "PLAYER_STARTED_MOVING" then
+        EndIdle()
+    elseif event == "PLAYER_STOPPED_MOVING" then
+        StartIdle()
     elseif event == "UNIT_PET" then
         local unit = ...
         if unit == "player" then
@@ -302,6 +405,7 @@ local function OnEvent(_, event, ...)
     elseif event == "PLAYER_REGEN_DISABLED" then
         inCombat = true
         combatStarted = GetTime()
+        EndIdle()
         QueueLowHealthFrameSample()
         Note("Combat started.")
     elseif event == "PLAYER_REGEN_ENABLED" then
@@ -313,6 +417,12 @@ local function OnEvent(_, event, ...)
             React("TRAIN", "long-fight-ended", 0.12)
         end
         combatStarted = 0
+        -- The player may be standing still after combat without a STOPPED event.
+        -- Start a fresh idle timer only if the movement API confirms stationary.
+        if type(IsPlayerMoving) == "function" then
+            local moving = IsPlayerMoving()
+            if not Hidden(moving) and not moving then StartIdle() end
+        end
     elseif event == "UNIT_HEALTH" then
         local unit = ...
         OnHealth(unit)
@@ -342,6 +452,7 @@ for _, event in ipairs({
     "ADDON_LOADED", "PLAYER_ENTERING_WORLD", "GROUP_ROSTER_UPDATE", "UNIT_PET",
     "UNIT_DIED", "UI_ERROR_MESSAGE", "UI_INFO_MESSAGE", "UNIT_COMBAT", "UNIT_SPELLCAST_INTERRUPTED",
     "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED", "UNIT_HEALTH",
+    "PLAYER_STARTED_MOVING", "PLAYER_STOPPED_MOVING",
     "PLAYER_LEVEL_UP", "QUEST_TURNED_IN", "PLAYER_UNGHOST",
     "CHAT_MSG_TEXT_EMOTE", "ADDON_ACTION_BLOCKED",
     "ADDON_ACTION_FORBIDDEN",
@@ -361,11 +472,24 @@ SlashCmdList.EMOTASPEAK = function(message)
         Note("Local event diagnostics: " .. (settings.debug and "ON" or "OFF"), true)
     elseif command == "status" then
         Note("auto=" .. tostring(settings.auto) .. ", debug=" .. tostring(settings.debug) ..
-            ", combat=" .. tostring(inCombat) .. ", lowHealthAuto=" .. tostring(settings.lowHealthAuto), true)
+            ", combat=" .. tostring(inCombat) .. ", lowHealthAuto=" .. tostring(settings.lowHealthAuto) ..
+            ", idleAuto=" .. tostring(settings.idleAuto), true)
     elseif command == "test" then
         NativeEmote("WAVE", "manual-test", true)
     elseif command == "health" then
         ReportHealth()
+    elseif command == "idle" then
+        if arg == "on" or arg == "off" then
+            settings.idleAuto = arg == "on"
+            Note("Idle jokes: " .. (settings.idleAuto and "ON" or "OFF") ..
+                " (master /emota auto must also be enabled)", true)
+        elseif arg == "test" then
+            NativeEmote("JOKE", "manual-idle-joke-test", true)
+        else
+            local timer = idleSince and math.floor(GetTime() - idleSince) or 0
+            Note(("Idle timer: %ds; pending: %s; idle reactions: %s"):format(
+                timer, tostring(not idleCheckedThisStop), tostring(settings.idleAuto)), true)
+        end
     elseif command == "lowhealth" then
         if arg == "on" or arg == "off" then
             settings.lowHealthAuto = arg == "on"
@@ -377,6 +501,6 @@ SlashCmdList.EMOTASPEAK = function(message)
                 " (also requires /emota auto on)", true)
         end
     else
-        Note("Commands: /emota status | debug on/off | auto on/off | test | health | lowhealth [on/off]", true)
+        Note("Commands: /emota status | debug on/off | auto on/off | idle [on/off/test] | test | health | lowhealth [on/off]", true)
     end
 end
