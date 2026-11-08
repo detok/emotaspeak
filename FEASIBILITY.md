@@ -1,6 +1,6 @@
 # WoW Forever API feasibility — EmotaSpeak
 
-Research date: 2026-11-07. Target client: Forever 1.60.1, interface `16001`. Status: experimental v0.1.0.
+Research date: 2026-11-07. Target client: Forever 1.60.1, interface `16001`. Status: experimental v0.1.1.
 
 ## Critical distinction
 
@@ -14,6 +14,7 @@ Research date: 2026-11-07. Target client: Forever 1.60.1, interface `16001`. Sta
 |---|---|---|---|
 | Out of mana | `UI_ERROR_MESSAGE`, localized `ERR_OUT_OF_MANA` | Identifies a *failed cast because mana is insufficient*, not being at an exact mana percentage | Implemented; `OOM` attempt; not yet confirmed in game |
 | Low HP during combat | `UNIT_HEALTH`, `UnitHealth` / `UnitHealthPercent` | Value is secret in combat: Lua cannot compare/arithmetic on it | **Do not build in-combat percentage trigger** |
+| Native red low-health warning | `LowHealthFrame:IsShown()` after player health/combat events | The UI frame is visible when Blizzard shows the low-health edge but can also be visible for fullscreen effects; shown state may itself be secret | Original read-only probe added; optional `HEALME` only when transition is public and not fullscreen |
 | Low HP after combat | `UNIT_HEALTH` + guarded `UnitHealth/UnitHealthMax` | Numeric comparison only when values are not secret | Supported fallback, out of combat only |
 | Pet dying | `UNIT_DIED` + pet GUID cached from `UnitGUID("pet")` | Death event exists; GUID can be restricted, so always guard | Attempt `CRY`; test in client |
 | Friend dying | `UNIT_DIED` + cached party/raid GUIDs | Detects members of *your group*, not every WoW friend anywhere in the world | Attempt `MOURN`; test in client |
@@ -27,6 +28,24 @@ Research date: 2026-11-07. Target client: Forever 1.60.1, interface `16001`. Sta
 | Wave back | `CHAT_MSG_TEXT_EMOTE` | Requires English `waves at you` and the player's name in target field, ignores own emotes and has a five-minute reply lock | Implemented, pending live tests; not for other locales |
 | Successful trade | `UI_INFO_MESSAGE` + localized `ERR_TRADE_COMPLETE` | True completed trade rather than merely closing a trade window | Implemented, `BOW` attempt; pending live test |
 | Defeated 3+ mobs | Enemy death details / combat log | Enemy GUID can be secret; old combat log event is unavailable | **Not reliably possible as an exact count** |
+
+## Inspection of the native UI and other addons (Nov 7, 2026)
+
+- Blizzard's `Blizzard_FrameXML/Shared/LowHealthFrame.lua` sets `lowHealthPercentStart = .35` and manages `LowHealthFrame`. It uses an internal health check while updating the red edge, which addon code **must not** invoke as a bypass.
+- The same frame can appear for the `LOW_HEALTH_FRAME_STATE_FULLSCREEN` branch when the screen-edge flash effect applies during a fullscreen panel. `IsShown` alone is not a perfect classifier.
+- ZSBT's `Core:CheckLowHealth` (Retail 12.x addon) queries `LowHealthFrame:IsShown()` and plays a one-time warning sound. That establishes a technique worth testing, **not** Forever compatibility or permission to interpret a secret return.
+- Hearth UI's CurseForge changelog says its red edge is built with a health-to-alpha curve. This can render a secret value without allowing Lua to branch on that value; its public description does not establish an automatic emote trigger.
+- EmotaSpeak's `ReadLowHealthFrame` implementation was written independently. It checks `issecretvalue`, declines ambiguous/fullscreen cases, and never calls `LowHealthFrame:DetermineFlashState()` or `GetHealthPercent()`.
+- The probe is enabled for local diagnostics via `/emota lowhealth`; an actual low-health emote is **opt-in** via `/emota lowhealth on` *and* `/emota auto on`, only on a public **hidden → shown** transition. Any secret result is ignored.
+
+### Source code consulted
+
+- [Blizzard LowHealthFrame.lua](https://github.com/Gethe/wow-ui-source/blob/live/Interface/AddOns/Blizzard_FrameXML/Shared/LowHealthFrame.lua)
+- [Blizzard LowHealthFrame.xml](https://github.com/Gethe/wow-ui-source/blob/live/Interface/AddOns/Blizzard_FrameXML/Mainline/LowHealthFrame.xml)
+- [ZSBT Core.lua](https://github.com/Zorellion/ZSBT/blob/main/Core/Core.lua) (low-health check)
+- [ZSBT changelog](https://github.com/Zorellion/ZSBT/blob/main/CHANGELOG.md) (v1.0.7)
+- [Hearth UI changelog](https://www.curseforge.com/wow/addons/hearth-ui/files/9476752) (low-health curve)
+- [Secret-aspect documentation](https://warcraft.wiki.gg/wiki/Secret_aspects)
 
 ## Restriction-safe principles
 
@@ -53,6 +72,8 @@ Test with local diagnostics enabled, then with auto enabled:
 - Dodge/parry/block several attacks — does `UNIT_COMBAT` report those subtypes?
 - Finish a fight longer than 20 seconds — does `PLAYER_REGEN_ENABLED` arrive, and was automatic `TRAIN` accepted?
 - Try `/emota health` in and out of combat — does it say SECRET for combat HP/mana? Do not print or operate on secret numeric values.
+- Use `/emota lowhealth` at full HP, then while the built-in red screen is flashing; inspect whether the UI state is publicly `hidden` / `shown`, `secret`, `missing`, or `ambiguous`.
+- Enable `/emota lowhealth on` only after the diagnostic correctly distinguishes ordinary combat from red low-health flashes. Check that it reacts at most once per shown transition, and not when a fullscreen UI effect fires.
 - Check `ADDON_ACTION_BLOCKED` and `ADDON_ACTION_FORBIDDEN` errors.
 
 Automatic TRAIN after a long fight has been observed working on a Forever client, but other triggers have not been validated. If any other automatic native emote is consistently blocked, preserve its event-detection idea with *optional local visual cues* or player-initiated keypresses, not a protected-action workaround.
