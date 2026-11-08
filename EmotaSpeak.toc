@@ -2,7 +2,7 @@
 ## Title: EmotaSpeak
 ## Notes: Context-aware, rare immersion emotes for WoW Forever
 ## Author: Detok
-## Version: 0.1.0
+## Version: 0.1.1
 ## SavedVariablesPerCharacter: EmotaSpeakDB
 
 EmotaSpeak.lua
