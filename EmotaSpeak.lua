@@ -1,4 +1,4 @@
--- EmotaSpeak v0.1.0 — WoW Forever contextual emote probe
+-- EmotaSpeak v0.1.1 — WoW Forever contextual emote probe
 -- Diagnostic-first character-immersion addon. Auto-emotes are OPT-IN.
 -- No custom /e, outgoing chat, combat log, or forbidden secret-value calculations.
 
@@ -12,6 +12,8 @@ local lastAttempt = -1e8
 local lastWaveReply = -1e8
 local lastByReason = {}
 local lowHPNoted = false
+local lastLowHealthFrameState = nil
+local lowHealthScanQueued = false
 
 local function Hidden(value)
     return value ~= nil and type(issecretvalue) == "function" and issecretvalue(value)
@@ -173,6 +175,65 @@ local function OnHealth(unit)
     end
 end
 
+-- Blizzard's visual low-health border is managed by LowHealthFrame.
+-- The frame may also appear for a fullscreen-edge effect unrelated to low HP.
+-- We NEVER call Blizzard's health evaluation functions or compare secret HP.
+-- Reading a frame's shown state is only useful when its result is not secret.
+local function ReadLowHealthFrame()
+    local visual = _G.LowHealthFrame
+    if not visual or type(visual.IsShown) ~= "function" then
+        return "missing"
+    end
+    local ok, shown = pcall(visual.IsShown, visual)
+    if not ok then
+        return "unavailable"
+    end
+    if Hidden(shown) then
+        return "secret"
+    end
+    if not shown then
+        return "hidden"
+    end
+
+    -- Blizzard also shows LowHealthFrame in combat when a fullscreen panel
+    -- needs an edge flash. Exclude that case rather than mislabel it as low HP.
+    if type(GetUIPanel) ~= "function" then
+        return "ambiguous"
+    end
+    local panelOK, panel = pcall(GetUIPanel, "fullscreen")
+    if not panelOK or Hidden(panel) then
+        return "ambiguous"
+    end
+    if panel then
+        return "fullscreen"
+    end
+    return "shown"
+end
+
+local function SampleLowHealthFrame()
+    if not settings then return end
+    local state = ReadLowHealthFrame()
+    if state ~= lastLowHealthFrameState then
+        Note("Native LowHealthFrame state: " .. state)
+        local old = lastLowHealthFrameState
+        lastLowHealthFrameState = state
+        if old == "hidden" and state == "shown" and settings.lowHealthAuto and settings.auto then
+            Note("Native low-health border activated; requesting HEALME.")
+            React("HEALME", "native-low-health-edge", 1.0)
+        end
+    end
+end
+
+local function QueueLowHealthFrameSample()
+    if lowHealthScanQueued or not C_Timer or not C_Timer.After then return end
+    lowHealthScanQueued = true
+    -- Observe only AFTER Blizzard has had a chance to refresh the native frame.
+    C_Timer.After(0, function()
+        lowHealthScanQueued = false
+        SampleLowHealthFrame()
+    end)
+end
+
 local function OnEvent(_, event, ...)
     if event == "ADDON_LOADED" then
         local loadedAddon = ...
@@ -180,11 +241,13 @@ local function OnEvent(_, event, ...)
         if type(EmotaSpeakDB) ~= "table" then EmotaSpeakDB = {} end
         EmotaSpeakDB.auto = EmotaSpeakDB.auto == true
         EmotaSpeakDB.debug = EmotaSpeakDB.debug == true
+        EmotaSpeakDB.lowHealthAuto = EmotaSpeakDB.lowHealthAuto == true
         settings = EmotaSpeakDB
         Note("Probe loaded. /emota help. Automatic emotes: OFF by default.", true)
 
     elseif event == "PLAYER_ENTERING_WORLD" or event == "GROUP_ROSTER_UPDATE" then
         RefreshCompanions()
+        QueueLowHealthFrameSample()
     elseif event == "UNIT_PET" then
         local unit = ...
         if unit == "player" then
@@ -239,9 +302,11 @@ local function OnEvent(_, event, ...)
     elseif event == "PLAYER_REGEN_DISABLED" then
         inCombat = true
         combatStarted = GetTime()
+        QueueLowHealthFrameSample()
         Note("Combat started.")
     elseif event == "PLAYER_REGEN_ENABLED" then
         inCombat = false
+        QueueLowHealthFrameSample()
         local duration = GetTime() - combatStarted
         Note(("Combat ended after %.1fs (does not imply kills)."):format(duration))
         if combatStarted > 0 and duration >= 20 then
@@ -249,7 +314,9 @@ local function OnEvent(_, event, ...)
         end
         combatStarted = 0
     elseif event == "UNIT_HEALTH" then
-        OnHealth(...)
+        local unit = ...
+        OnHealth(unit)
+        if unit == "player" then QueueLowHealthFrameSample() end
     elseif event == "PLAYER_LEVEL_UP" then
         Note("Level up!")
         React("CHEER", "level-up", 1.0)
@@ -294,12 +361,22 @@ SlashCmdList.EMOTASPEAK = function(message)
         Note("Local event diagnostics: " .. (settings.debug and "ON" or "OFF"), true)
     elseif command == "status" then
         Note("auto=" .. tostring(settings.auto) .. ", debug=" .. tostring(settings.debug) ..
-            ", combat=" .. tostring(inCombat), true)
+            ", combat=" .. tostring(inCombat) .. ", lowHealthAuto=" .. tostring(settings.lowHealthAuto), true)
     elseif command == "test" then
         NativeEmote("WAVE", "manual-test", true)
     elseif command == "health" then
         ReportHealth()
+    elseif command == "lowhealth" then
+        if arg == "on" or arg == "off" then
+            settings.lowHealthAuto = arg == "on"
+            Note("Native low-health HEALME reaction: " ..
+                (settings.lowHealthAuto and "ON (experimental)" or "OFF"), true)
+        else
+            Note("Native LowHealthFrame: " .. ReadLowHealthFrame(), true)
+            Note("Low-health automatic reaction: " .. tostring(settings.lowHealthAuto) ..
+                " (also requires /emota auto on)", true)
+        end
     else
-        Note("Commands: /emota status | debug on/off | auto on/off | test | health", true)
+        Note("Commands: /emota status | debug on/off | auto on/off | test | health | lowhealth [on/off]", true)
     end
 end
