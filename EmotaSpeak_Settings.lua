@@ -2,6 +2,7 @@
 -- Native Settings category plus Blizzard's built-in addon compartment.
 local panel = CreateFrame("Frame", "EmotaSpeakSettingsPanel", UIParent)
 panel:SetSize(570, 450)
+panel:Hide() -- Settings will show the canvas only when its category is selected.
 
 local category
 local controls = {}
