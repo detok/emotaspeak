@@ -1,6 +1,5 @@
--- EmotaSpeak v0.3.0 — WoW Forever contextual emotes
--- Diagnostic-first character-immersion addon. Auto-emotes are OPT-IN.
--- No custom /e, outgoing chat, combat log, or forbidden secret-value calculations.
+-- EmotaSpeak 0.4.0: standalone character personality for WoW Forever.
+-- Native emotes are opt-in and never dispatched in combat.
 
 local addonName = ...
 local frame = CreateFrame("Frame")
@@ -12,22 +11,112 @@ local lastAttempt = -1e8
 local lastMeaningfulAttempt = -1e8
 local lastWaveReply = -1e8
 local lastByReason = {}
-local lowHPNoted = false
-local lastLowHealthFrameState = nil
-local lowHealthScanQueued = false
+local lowHPNoted=false
+local lastLowHealthFrameState=nil
+local lowHealthScanQueued=false
 -- Per-login session pacing; intentionally not written to SavedVariables.
 local idleSince = nil
 local idleAfterSeconds = nil
 local sessionJokeCount = 0
+local sessionIdleActions = 0
+local lastIdleToken, previousIdleToken = nil, nil
+local activePose, poseUntil = nil, nil
 local idleTicker = nil
 
+-- Blizzard's EMOTE##_TOKEN constants expose this client's native emote list.
+-- Triggered emotes stay enabled by default; other entries are opt-in for idle
+-- variety, but each can be previewed manually from the native settings page.
+local automatic={WAVE=true,JOKE=true,TRAIN=true,CHEER=true,CRY=true,
+    MOURN=true,OOM=true,SIGH=true,BOW=true,LAUGH=true,FLEX=true}
+-- Intentional, curated *default* idle reactions. They are checked by default in
+-- the emote catalog, and each can be disabled independently. Pose actions alter
+-- character state: only use them while the player is stationary and safe.
+local idlePresets = {
+    {token="JOKE", weight=21},
+    {token="DANCE", weight=9},
+    {token="SIT", weight=4, pose=true},
+    {token="SLEEP", weight=3, pose=true},
+    {token="LAYDOWN", weight=3, pose=true},
+    {token="YAWN", weight=8},
+    {token="PONDER", weight=10},
+    {token="SHRUG", weight=8},
+    {token="FLEX", weight=5},
+    {token="ROFL", weight=5},
+    {token="SALUTE", weight=4},
+    {token="SIGH", weight=6},
+    {token="STARE", weight=4},
+    {token="CHICKEN", weight=3},
+    {token="APPLAUD", weight=3},
+    {token="LOOK", weight=4},
+}
+local idleFeatured, poseTokens = {}, {}
+for _,entry in ipairs(idlePresets) do
+    idleFeatured[entry.token]=true
+    if entry.pose then poseTokens[entry.token]=true end
+end
+local defaults={"WAVE","JOKE","TRAIN","CHEER","CRY","MOURN","OOM","SIGH",
+    "BOW","LAUGH","FLEX","DANCE","SALUTE","KNEEL","THANK","HELLO",
+    "GOODBYE","NO","YES","APPLAUD","ROAR","SHY","SLEEP","SIT",
+    "LAYDOWN","STAND","YAWN","PONDER","SHRUG","ROFL","STARE","LOOK",
+    "POINT","BEG","CHICKEN","TALK","WELCOME","CONGRATULATE"}
+local catalog
+local function Catalog()
+    if catalog then return catalog end
+    local found={}
+    for _,token in ipairs(defaults) do found[token]=true end
+    for name,token in pairs(_G) do
+        if type(name)=="string" and name:match("^EMOTE%d+_TOKEN$")
+            and type(token)=="string" and token:match("^[A-Z][A-Z0-9_]*$") then
+            found[token]=true
+        end
+    end
+    catalog={}
+    for token in pairs(found) do
+        catalog[#catalog+1]={
+            token=token,automatic=automatic[token]==true,idle=idleFeatured[token]==true,manualPose=poseTokens[token]==true
+        }
+    end
+    table.sort(catalog,function(a,b)
+        if a.automatic~=b.automatic then return a.automatic end
+        if a.idle~=b.idle then return a.idle end
+        return a.token<b.token
+    end)
+    return catalog
+end
+function EmotaSpeak_EmotaCatalog()
+    return Catalog()
+end
+function EmotaSpeak_EmotaGetEnabled(token)
+    if not automatic[token] then
+        local found=false
+        for _,entry in ipairs(Catalog()) do if entry.token==token then found=true;break end end
+        if not found then return false end
+    end
+    local overrides=settings and settings.allowedEmotes
+    if overrides and overrides[token]~=nil then return overrides[token]==true end
+    return automatic[token]==true or idleFeatured[token]==true
+end
+function EmotaSpeak_EmotaSetEnabled(token,value)
+    for _,entry in ipairs(Catalog()) do
+        if entry.token==token and settings then
+            settings.allowedEmotes=settings.allowedEmotes or {}
+            settings.allowedEmotes[token]=value==true
+            return
+        end
+    end
+end
+local function JokeScale()
+    local value=settings and settings.jokeFrequency or 50
+    if value<50 then return 1+(50-value)*9/50 end
+    return 1-(value-50)*0.82/50
+end
 local function Hidden(value)
     return value ~= nil and type(issecretvalue) == "function" and issecretvalue(value)
 end
 
 local function Note(message, always)
     if always or (settings and settings.debug) then
-        DEFAULT_CHAT_FRAME:AddMessage("|cff77ccffEmotaSpeak|r " .. message)
+        DEFAULT_CHAT_FRAME:AddMessage("|cff77ccffChalkBox Emota|r " .. message)
     end
 end
 
@@ -72,22 +161,41 @@ local function ReportHealth()
 end
 
 local function NativeEmote(token, reason, manual, targetName)
+    -- Some Forever clients treat PerformEmote as a protected chat action.
+    -- No manual, reactive, or automatic dispatch while combat is active.
+    if inCombat or (type(InCombatLockdown)=="function" and
+        InCombatLockdown()) then return false end
+    if type(UnitAffectingCombat)=="function" then
+        local fighting=UnitAffectingCombat("player")
+        if Hidden(fighting) or fighting then return false end
+    end
     if not C_ChatInfo or not C_ChatInfo.PerformEmote then
         Note("C_ChatInfo.PerformEmote does not exist in this client.", true)
-        return
+        return false
     end
     if not manual and not (settings and settings.auto) then
-        return
+        return false
+    end
+    if not manual and token~="STAND" and not EmotaSpeak_EmotaGetEnabled(token) then
+        return false
+    end
+    -- Automatic sitting/sleeping/standing can interrupt drinking and player
+    -- actions even outside combat. Keep pose emotes as manual previews only.
+    if not manual and (poseTokens[token] or token=="STAND") then
+        return false
     end
 
     local now = GetTime()
     if not manual then
         -- A single global cooldown and a longer per-trigger lock prevent spam.
-        if now - lastAttempt < 45 or now - (lastByReason[reason] or -1e8) < 120 then
-            return
+        local idleReason=(reason=="idle-joke" or reason=="idle-personality" or
+            reason=="idle-variety" or reason=="idle-pose-finish")
+        local cooldown=idleReason and 15 or 45
+        if now - lastAttempt < cooldown or now - (lastByReason[reason] or -1e8) < cooldown then
+            return false
         end
         lastAttempt = now
-        if reason ~= "idle-joke" then lastMeaningfulAttempt = now end
+        if not idleReason then lastMeaningfulAttempt = now end
         lastByReason[reason] = now
     end
 
@@ -95,13 +203,13 @@ local function NativeEmote(token, reason, manual, targetName)
         local lockdown = C_ChatInfo.InChatMessagingLockdown()
         if Hidden(lockdown) or lockdown then
             Note("Skipped " .. token .. ": chat messaging is restricted.", true)
-            return
+            return false
         end
     end
     local _, instanceType = GetInstanceInfo()
     if instanceType == "pvp" or instanceType == "arena" then
         Note("Skipped emote attempt in a PvP instance.")
-        return
+        return false
     end
 
     -- pcall catches a Lua error; it does NOT bypass a protected-action rule.
@@ -116,9 +224,11 @@ local function NativeEmote(token, reason, manual, targetName)
         -- Do not label this harmless return as an error or spam it in chat.
         -- It remains an observation, not proof of successful playback.
         Note(("Emote requested: %s (%s)"):format(token, reason), manual)
+        return true
     else
         Note(("%s -> %s: API raised an error or restriction"):format(reason, token), true)
     end
+    return false
 end
 
 local function React(token, reason, chance, targetName)
@@ -134,82 +244,200 @@ end
 -- No reply to untargeted emotes, our own emotes or another LivingSoul user
 -- repeatedly responding: the 5-minute social lock prevents ping-pong loops.
 
--- Low-frequency idle behavior, driven by movement events rather than HP or combat data.
--- One random roll per stationary period, after a randomized delay.
--- Growing, randomly staggered intervals through a single play session.
--- First joke: ~1 minute. Second: 1–3m. Later: up to 5–10m.
+-- Idle personality is a weighted, low-frequency rotation, not a
+-- time-based chat spammer. It can choose to do nothing, and avoids both of the
+-- previous two actions when there are enough enabled choices.
 local function NextIdleDelay()
-    if sessionJokeCount == 0 then return 60 end
-    if sessionJokeCount == 1 then return math.random(60, 180) end
-    if sessionJokeCount == 2 then return math.random(90, 240) end
-    if sessionJokeCount == 3 then return math.random(150, 360) end
-    if sessionJokeCount == 4 then return math.random(240, 480) end
-    return math.random(300, 600)
+    local baseline
+    if sessionIdleActions==0 then baseline=60
+    elseif sessionIdleActions==1 then baseline=math.random(90,180)
+    elseif sessionIdleActions==2 then baseline=math.random(120,300)
+    elseif sessionIdleActions==3 then baseline=math.random(180,420)
+    else baseline=math.random(240,600) end
+    return math.max(20,math.floor(baseline*JokeScale()+0.5))
 end
 
 local function StartIdle()
-    idleSince = GetTime()
-    idleAfterSeconds = NextIdleDelay()
-    Note(("Idle window begins; next joke in %ds (session jokes: %d)"):format(
-        idleAfterSeconds, sessionJokeCount))
+    idleSince=GetTime()
+    idleAfterSeconds=NextIdleDelay()
+    Note(("Idle window begins; possible event in %ds (session idle events: %d)"):format(
+        idleAfterSeconds,sessionIdleActions))
 end
 
 local function EndIdle()
-    idleSince = nil
-    idleAfterSeconds = nil
+    idleSince=nil
+    idleAfterSeconds=nil
+    -- Walking or combat naturally breaks sitting/sleeping poses. Never send a
+    -- potentially restricted STAND command while moving or in combat.
+    activePose=nil
+    poseUntil=nil
 end
 
 local function IdleIsSafe()
-    if InCombatLockdown() then return false end
-
-    -- A missed movement event shouldn't cause jokes while actively walking.
-    if type(IsPlayerMoving) == "function" then
-        local m = IsPlayerMoving()
-        if Hidden(m) or m then return false end
+    if type(InCombatLockdown)=="function" and InCombatLockdown() then return false end
+    if type(UnitAffectingCombat)=="function" then
+        local fighting=UnitAffectingCombat("player")
+        if Hidden(fighting) or fighting then return false end
     end
-
-    -- No talking while dead, away from the keyboard, mounted or traveling.
-    if type(UnitIsDeadOrGhost) == "function" then
-        local dead = UnitIsDeadOrGhost("player")
+    if type(IsPlayerMoving)=="function" then
+        local moving=IsPlayerMoving()
+        if Hidden(moving) or moving then return false end
+    end
+    if type(UnitIsDeadOrGhost)=="function" then
+        local dead=UnitIsDeadOrGhost("player")
         if Hidden(dead) or dead then return false end
     end
-    if type(UnitIsAFK) == "function" then
-        local afk = UnitIsAFK("player")
+    if type(UnitIsFeignDeath)=="function" then
+        local feign=UnitIsFeignDeath("player")
+        if Hidden(feign) or feign then return false end
+    end
+    if type(UnitIsAFK)=="function" then
+        local afk=UnitIsAFK("player")
         if Hidden(afk) or afk then return false end
     end
-    if type(IsMounted) == "function" then
-        local mounted = IsMounted()
+    if type(IsMounted)=="function" then
+        local mounted=IsMounted()
         if Hidden(mounted) or mounted then return false end
     end
-    if type(UnitOnTaxi) == "function" then
-        local onTaxi = UnitOnTaxi("player")
-        if Hidden(onTaxi) or onTaxi then return false end
+    if type(UnitOnTaxi)=="function" then
+        local taxi=UnitOnTaxi("player")
+        if Hidden(taxi) or taxi then return false end
     end
-
-    -- Avoid the immersion gag while dealing with a vendor or another player.
-    for _, uiName in ipairs({"MerchantFrame", "TradeFrame", "BankFrame", "MailFrame"}) do
-        local ui = _G[uiName]
+    for _,fn in ipairs({"UnitCastingInfo","UnitChannelInfo"}) do
+        local api=_G[fn]
+        if type(api)=="function" then
+            local cast=api("player")
+            if Hidden(cast) or cast then return false end
+        end
+    end
+    for _,name in ipairs({"MerchantFrame","TradeFrame","BankFrame","MailFrame",
+        "AuctionHouseFrame","AuctionFrame"}) do
+        local ui=_G[name]
         if ui and ui.IsShown then
-            local visible = ui:IsShown()
-            if Hidden(visible) or visible then return false end
+            local shown=ui:IsShown()
+            if Hidden(shown) or shown then return false end
         end
     end
     return true
 end
 
+local function IdlePool()
+    local pool={}
+    local context=nil
+    if settings and settings.contextual~=false and
+        type(EmotaSpeak_PersonalityContext)=="function" then
+        context=EmotaSpeak_PersonalityContext()
+    end
+    for _,entry in ipairs(idlePresets) do
+        if not entry.pose and EmotaSpeak_EmotaGetEnabled(entry.token) then
+            local extra=context and context.weights[entry.token] or 0
+            pool[#pool+1]={token=entry.token,weight=entry.weight+extra,pose=entry.pose}
+        end
+    end
+    if context and context.weights then
+        for token,weight in pairs(context.weights) do
+            if not poseTokens[token] and token~="STAND"
+                and EmotaSpeak_EmotaGetEnabled(token) then
+                local found=false
+                for _,entry in ipairs(pool) do if entry.token==token then found=true;break end end
+                if not found then pool[#pool+1]={token=token,weight=weight} end
+            end
+        end
+        if context.petName and EmotaSpeak_EmotaGetEnabled("CHEER") then
+            pool[#pool+1]={token="CHEER",weight=5,petName=context.petName}
+        end
+    end
+    if settings and settings.idleVariety then
+        -- Explicitly enabled additional emotes can join the pool. The curated
+        -- set above remains the primary source of animated behaviors.
+        for _,entry in ipairs(Catalog()) do
+            if not automatic[entry.token] and not idleFeatured[entry.token]
+                and entry.token~="STAND" and not poseTokens[entry.token]
+                and EmotaSpeak_EmotaGetEnabled(entry.token) then
+                pool[#pool+1]={token=entry.token,weight=2}
+            end
+        end
+    end
+    if #pool>2 then
+        local filtered={}
+        for _,entry in ipairs(pool) do
+            if entry.token~=lastIdleToken and entry.token~=previousIdleToken then
+                filtered[#filtered+1]=entry
+            end
+        end
+        if #filtered>0 then return filtered end
+    end
+    return pool
+end
+
+local function PickIdle()
+    local pool=IdlePool()
+    local total=0
+    for _,entry in ipairs(pool) do total=total+entry.weight end
+    if total<=0 then return nil end
+    local pick=math.random(1,total)
+    for _,entry in ipairs(pool) do
+        pick=pick-entry.weight
+        if pick<=0 then return entry end
+    end
+end
+
 local function CheckIdle()
     if not settings or not settings.auto or not settings.idleAuto then return end
-    if not idleSince or not idleAfterSeconds then return end
-    if GetTime() - idleSince < idleAfterSeconds then return end
-    if GetTime() - lastMeaningfulAttempt < 120 then return end
     if not IdleIsSafe() then return end
-
-    -- Blizzard chooses the voiced racial joke itself via JOKE (/silly).
-    Note("Idle personality: requesting a voiced joke.")
-    NativeEmote("JOKE", "idle-joke", false)
-    sessionJokeCount = sessionJokeCount + 1
-    -- Still standing? Schedule another with a longer random gap.
+    local now=GetTime()
+    if activePose then
+        if poseUntil and now>=poseUntil then
+            if NativeEmote("STAND","idle-pose-finish",false) then
+                activePose,poseUntil=nil,nil
+                StartIdle()
+            end
+        end
+        return
+    end
+    if not idleSince or not idleAfterSeconds then return end
+    if now-idleSince<idleAfterSeconds then return end
+    if now-lastMeaningfulAttempt<120 then return end
+    -- Quiet roll: even when the timer expires, nothing may happen. At the
+    -- center slider 25% of opportunities are skipped; very frequent settings
+    -- skip a little less, very rare settings skip a little more.
+    local frequency=settings.jokeFrequency or 50
+    local chance=75+(frequency-50)*0.30
+    if math.random(1,100)>chance then
+        StartIdle()
+        return
+    end
+    local selected=PickIdle()
+    if not selected then
+        StartIdle()
+        return
+    end
+    local token=selected.token
+    local reason=token=="JOKE" and "idle-joke" or "idle-personality"
+    if NativeEmote(token,reason,false,selected.petName) then
+        previousIdleToken,lastIdleToken=lastIdleToken,token
+        sessionIdleActions=sessionIdleActions+1
+        if token=="JOKE" then sessionJokeCount=sessionJokeCount+1 end
+        Note(("Idle personality: %s (event %d)"):format(token,sessionIdleActions))
+        if selected.pose then
+            -- We only stand the character up again if Emota initiated this pose,
+            -- it remained safe, and the player has not moved or entered combat.
+            activePose=token
+            poseUntil=now+math.random(20,38)
+            return
+        end
+    end
     StartIdle()
+end
+
+function EmotaSpeak_EmotaPreviewIdle()
+    if not settings then return end
+    local picked=PickIdle()
+    if not picked then
+        Note("Enable at least one idle emote in the Emote Catalog first.",true)
+        return
+    end
+    return NativeEmote(picked.token,"idle-preview",true,picked.petName)
 end
 
 local function MaybeWaveBack(text, sender, target)
@@ -326,17 +554,20 @@ local function OnEvent(_, event, ...)
         local loadedAddon = ...
         if loadedAddon ~= addonName then return end
         if type(EmotaSpeakDB) ~= "table" then EmotaSpeakDB = {} end
-        EmotaSpeakDB.auto = EmotaSpeakDB.auto == true
-        EmotaSpeakDB.debug = EmotaSpeakDB.debug == true
-        EmotaSpeakDB.lowHealthAuto = EmotaSpeakDB.lowHealthAuto == true
-        -- Idle jokes are on when master auto is enabled, unless disabled explicitly.
-        EmotaSpeakDB.idleAuto = EmotaSpeakDB.idleAuto ~= false
-        settings = EmotaSpeakDB
+        local saved = EmotaSpeakDB
+        saved.auto = saved.auto == true
+        saved.debug = saved.debug == true
+        saved.lowHealthAuto = saved.lowHealthAuto == true
+        saved.idleAuto = saved.idleAuto ~= false
+        saved.idleVariety = saved.idleVariety == true
+        if saved.contextual==nil then saved.contextual=true end
+        saved.jokeFrequency = type(saved.jokeFrequency)=="number"
+            and math.max(0,math.min(100,math.floor(saved.jokeFrequency+0.5))) or 50
+        if type(saved.allowedEmotes)~="table" then saved.allowedEmotes={} end
+        settings = saved
         if not idleTicker and C_Timer and C_Timer.NewTicker then
             idleTicker = C_Timer.NewTicker(5, CheckIdle)
         end
-        Note("EmotaSpeak loaded. /emota help. Automatic emotes: " ..
-            (settings.auto and "ON" or "OFF") .. ".", true)
 
     elseif event == "PLAYER_ENTERING_WORLD" or event == "GROUP_ROSTER_UPDATE" then
         RefreshCompanions()
@@ -425,9 +656,9 @@ local function OnEvent(_, event, ...)
             if not Hidden(moving) and not moving then StartIdle() end
         end
     elseif event == "UNIT_HEALTH" then
-        local unit = ...
+        local unit=...
         OnHealth(unit)
-        if unit == "player" then QueueLowHealthFrameSample() end
+        if unit=="player" then QueueLowHealthFrameSample() end
     elseif event == "PLAYER_LEVEL_UP" then
         Note("Level up!")
         React("CHEER", "level-up", 1.0)
@@ -461,15 +692,29 @@ for _, event in ipairs({
     frame:RegisterEvent(event)
 end
 
-function EmotaSpeak_TestJoke()
+function EmotaSpeak_EmotaTest(token)
+    if type(token)=="string" then
+        for _,entry in ipairs(Catalog()) do
+            if entry.token==token then return NativeEmote(token,"catalog-preview",true) end
+        end
+    end
+    return false
+end
+function EmotaSpeak_EmotaSetJokeFrequency(value)
+    if not settings or type(value)~="number" then return end
+    settings.jokeFrequency=math.max(0,math.min(100,math.floor(value+0.5)))
+    EmotaSpeak_EmotaOnSettingChanged("idleAuto")
+end
+
+function EmotaSpeak_EmotaTestJoke()
     NativeEmote("JOKE", "manual-settings-joke-test", true)
 end
 
 -- Called by both the native settings checkboxes and slash commands.
 -- Re-arming from a toggle prevents an immediate joke when the user
 -- has been standing still for a long time with reactions disabled.
-function EmotaSpeak_OnSettingChanged(key)
-    if key ~= "auto" and key ~= "idleAuto" then return end
+function EmotaSpeak_EmotaOnSettingChanged(key)
+    if key ~= "auto" and key ~= "idleAuto" and key ~= "jokeFrequency" then return end
     EndIdle()
     if settings and settings.auto and settings.idleAuto and type(IsPlayerMoving) == "function" then
         local moving = IsPlayerMoving()
@@ -477,62 +722,68 @@ function EmotaSpeak_OnSettingChanged(key)
     end
 end
 
-SLASH_EMOTASPEAK1 = "/emota"
-SlashCmdList.EMOTASPEAK = function(message)
+
+function EmotaSpeak_EmotaCommand(message)
     if not settings then return end
-    local command, arg = strsplit(" ", string.lower(message or ""))
-    if command == "" or command == "settings" or command == "config" then
+    local command,arg=strsplit(" ",string.lower(message or ""))
+    if command=="" or command=="settings" or command=="config" then
         if EmotaSpeak_OpenSettings then EmotaSpeak_OpenSettings() else
-            Note("Settings panel not available; use /emota auto on/off.", true)
-        end
-    elseif command == "auto" and (arg == "on" or arg == "off") then
-        settings.auto = arg == "on"
-        EmotaSpeak_OnSettingChanged("auto")
-        Note("Automatic native-emote attempts: " .. (settings.auto and "ON (experimental)" or "OFF"), true)
-    elseif command == "debug" and (arg == "on" or arg == "off") then
-        settings.debug = arg == "on"
-        Note("Local event diagnostics: " .. (settings.debug and "ON" or "OFF"), true)
-    elseif command == "status" then
-        Note("auto=" .. tostring(settings.auto) .. ", debug=" .. tostring(settings.debug) ..
-            ", combat=" .. tostring(inCombat) .. ", lowHealthAuto=" .. tostring(settings.lowHealthAuto) ..
-            ", idleAuto=" .. tostring(settings.idleAuto) ..
-            ", sessionJokes=" .. sessionJokeCount, true)
-    elseif command == "test" then
-        NativeEmote("WAVE", "manual-test", true)
-    elseif command == "health" then
-        ReportHealth()
-    elseif command == "idle" then
-        if arg == "on" or arg == "off" then
-            settings.idleAuto = arg == "on"
-            EmotaSpeak_OnSettingChanged("idleAuto")
-            Note("Idle jokes: " .. (settings.idleAuto and "ON" or "OFF") ..
-                " (master /emota auto must also be enabled)", true)
-        elseif arg == "test" then
-            NativeEmote("JOKE", "manual-idle-joke-test", true)
-        elseif arg == "reset" then
-            sessionJokeCount = 0
+            Note("Open Options > AddOns > EmotaSpeak.",true) end
+    elseif command=="help" then
+        Note("Commands: /emota auto on/off | idle on/off/test/preview/reset | variety on/off | context on/off | debug on/off | test | health | lowhealth on/off | status",true)
+    elseif command=="auto" and (arg=="on" or arg=="off") then
+        settings.auto=arg=="on"; EmotaSpeak_EmotaOnSettingChanged("auto")
+        Note("Automatic reactions: "..(settings.auto and "ON" or "OFF"),true)
+    elseif command=="debug" and (arg=="on" or arg=="off") then
+        settings.debug=arg=="on"; Note("Diagnostics: "..arg,true)
+    elseif command=="variety" and (arg=="on" or arg=="off") then
+        settings.idleVariety=arg=="on"; Note("Extra idle variety: "..arg,true)
+    elseif command=="context" and (arg=="on" or arg=="off") then
+        settings.contextual=arg=="on"; Note("Contextual flavor: "..arg,true)
+    elseif command=="idle" then
+        if arg=="on" or arg=="off" then
+            settings.idleAuto=arg=="on"; EmotaSpeak_EmotaOnSettingChanged("idleAuto")
+            Note("Idle personality: "..arg.." (also requires /emota auto on)",true)
+        elseif arg=="test" then
+            EmotaSpeak_EmotaTestJoke()
+        elseif arg=="preview" then
+            EmotaSpeak_EmotaPreviewIdle()
+        elseif arg=="reset" then
+            sessionJokeCount,sessionIdleActions=0,0
+            previousIdleToken,lastIdleToken=nil,nil
             EndIdle()
-            if type(IsPlayerMoving) == "function" then
-                local moving = IsPlayerMoving()
+            if type(IsPlayerMoving)=="function" then
+                local moving=IsPlayerMoving()
                 if not Hidden(moving) and not moving then StartIdle() end
             end
-            Note("Idle personality pacing reset for this session.", true)
+            Note("Idle pacing reset.",true)
         else
-            local timer = idleSince and math.floor(GetTime() - idleSince) or 0
-            Note(("Idle for %ds; next scheduled after %ss; jokes this session: %d; enabled: %s"):format(
-                timer, tostring(idleAfterSeconds or "-"), sessionJokeCount, tostring(settings.idleAuto)), true)
+            local elapsed=idleSince and math.floor(GetTime()-idleSince) or 0
+            Note(("Idle %ds; next opportunity after %ss; actions %d; jokes %d"):format(
+                elapsed,tostring(idleAfterSeconds or "-"),sessionIdleActions,sessionJokeCount),true)
         end
-    elseif command == "lowhealth" then
-        if arg == "on" or arg == "off" then
-            settings.lowHealthAuto = arg == "on"
-            Note("Native low-health HEALME reaction: " ..
-                (settings.lowHealthAuto and "ON (experimental)" or "OFF"), true)
+    elseif command=="health" then ReportHealth()
+    elseif command=="lowhealth" then
+        if arg=="on" or arg=="off" then
+            settings.lowHealthAuto=arg=="on"
+            Note("Experimental low-health border response: "..arg,true)
         else
-            Note("Native LowHealthFrame: " .. ReadLowHealthFrame(), true)
-            Note("Low-health automatic reaction: " .. tostring(settings.lowHealthAuto) ..
-                " (also requires /emota auto on)", true)
+            Note("LowHealthFrame: "..ReadLowHealthFrame()..", enabled="..
+                tostring(settings.lowHealthAuto),true)
         end
-    else
-        Note("Commands: /emota [settings] | status | debug on/off | auto on/off | idle [on/off/test/reset] | test | health | lowhealth [on/off]", true)
-    end
+    elseif command=="status" then
+        Note("auto="..tostring(settings.auto)..", idle="..tostring(settings.idleAuto)..
+            ", frequency="..tostring(settings.jokeFrequency)..", variety="..
+            tostring(settings.idleVariety)..", context="..tostring(settings.contextual)..
+            ", debug="..tostring(settings.debug)..", lowHealthAuto="..
+            tostring(settings.lowHealthAuto)..", combat="..tostring(inCombat)..
+            ", idleEvents="..sessionIdleActions..", jokes="..sessionJokeCount,true)
+    elseif command=="test" then EmotaSpeak_EmotaTest("WAVE")
+    else Note("Unknown command. Type /emota help.",true) end
 end
+
+-- Backwards-compatible entry points.
+function EmotaSpeak_TestJoke() EmotaSpeak_EmotaTestJoke() end
+function EmotaSpeak_OnSettingChanged(key) EmotaSpeak_EmotaOnSettingChanged(key) end
+SLASH_EMOTASPEAK1="/emota"
+SlashCmdList.EMOTASPEAK=function(message) EmotaSpeak_EmotaCommand(message) end
