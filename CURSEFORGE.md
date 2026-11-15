@@ -1,69 +1,48 @@
-# EmotaSpeak — CurseForge publishing draft
+# EmotaSpeak — CurseForge listing copy
 
 ## Project name
 EmotaSpeak
 
 ## Short summary
-Give your WoW character a personality with subtle reactions and occasional voiced jokes.
+Give your WoW Forever character a personality with natural reactions, racial flavor and customizable idle emotes.
 
-## Long description
+## Public description
 
 **A little personality for every adventure.**
 
-EmotaSpeak makes your character feel more alive in **World of Warcraft: Forever** by responding to everyday moments with Blizzard's existing character emotes and voiced lines.
+EmotaSpeak makes your character feel a bit more alive in **World of Warcraft: Forever**. It uses the game's own emotes and voiced jokes to respond to everyday moments—without custom chat bots, spam or gameplay automation.
 
-Your hunter's pet dies? They might mourn. You finish a long fight? Your character may celebrate. Someone waves directly at you? Your character can wave back. When you're standing around for a while, your character can tell one of their own racial jokes—without you typing /silly.
+A wave directed at you might earn a wave in return. Your pet or party companion might be mourned. A difficult fight may end with a celebration. When you stand still long enough, your character can use a random, thoughtfully paced idle emote.
 
-**Features**
-- **Natural reactions:** wave-backs, trade bows, pet/party death reactions, level-up cheers, interrupted-spell sighs, and other contextual moments.
-- **Voiced idle jokes:** an early joke after roughly a minute of stillness, then increasingly spaced-out intervals of 1–3, 1½–4, 2½–6, 4–8 and eventually 5–10 minutes as your session continues.
-- **Low noise:** cooldowns, combat and activity checks, and subtle probabilities.
-- **Built-in settings:** toggle reactions, idle jokes, and diagnostics through the WoW AddOns settings panel or the Addon Compartment beside the minimap.
-- **Slash commands:** every setting can still be managed with `/emota`.
-- **Simple installation:** no dependencies, no external program, no AI-generated chat or account access.
+### Features
 
-**Controls**
+- **Social and adventure reactions:** targeted wave-backs, trade bows, companion reactions, level-up cheers and occasional post-combat emotes.
+- **Idle personality:** native jokes, dance, yawn, ponder and more, chosen from a weighted pool.
+- **Race and class flavor:** the selected character's race and class, resting state and Hunter pet can influence idle choices.
+- **Race Behavior:** Off, Subtle, Default and Expressive weighting for supported races; planned profiles are labeled clearly.
+- **Emote Catalog:** individual switches and instant manual previews; pose-changing emotes are manual-only.
+- **Frequency control:** tune idle pacing, extra variety, contextual behavior and optional diagnostics.
+- **Safe and quiet:** opt-in automation, cooldowns, no automatic emotes in combat, and checks for activity and relevant open windows.
+- **Standalone:** no dependencies. Works alongside ChalkBox without doubling up on automatic reactions.
 
-Type `/emota` or use Options → AddOns → EmotaSpeak. Use `/emota idle test` to hear your character's racial joke.
+### How to use
 
-**Compatibility**
+Enter `/emota`, use **Options → AddOns → EmotaSpeak**, or click its AddOn Compartment shortcut. Auto reactions are **off by default**; enable them when you want your character to react. Use the settings **Test Joke**, **Surprise Me** and catalog **Try** buttons to preview emotes while out of combat.
 
-Designed for **WoW Forever 1.60.1**. Requires no other addons.
+For WoW Forever interface **16001**. Specific reactions depend on client events and emote restrictions. Low-health experiments are not guaranteed combat alerts.
 
-**Important notes**
-
-EmotaSpeak uses standard Blizzard emotes and does not cast spells, move your character, or automate gameplay. Individual event reactions depend on which signals the client exposes. This early release remains experimental: some combat reactions need live testing. It does not promise automatic healing requests at an exact low-health percentage, because Forever protects combat health data.
-
-**Made by Detok Whitemaine.**
+**Created by Detok Whitemaine.**
 
 ---
 
-## Submission checklist (not part of public description)
+## Publishing checklist — not for public description
 
-- [ ] Test both clicking the Addon Compartment and opening Settings → AddOns → EmotaSpeak in the live Forever client.
-- [ ] Verify the custom icon appears after a full WoW restart.
-- [ ] Confirm a joke after ~60 stationary seconds, then a second joke within 60–180 seconds of further eligible idle time, with session count preserved after movement.
-- [ ] Confirm `/emota auto off` disables reactions immediately, and the checkboxes match.
-- [ ] Confirm `/emota idle off` disables ambient jokes without disabling pet, trade, or quest reactions.
-- [ ] Inspect the package with `python scripts/package.py`—ZIP contains a top-level EmotaSpeak folder.
-- [ ] Select **World of Warcraft: Forever**, interface 16001, on the file upload page.
-- [ ] Add a 256px or larger PNG project image (use the companion EmotaSpeak CurseForge icon).
-- [ ] Choose and add the project's license; no license has been selected on behalf of the author.
-- [ ] Choose a release channel (Alpha until user testing confirms v0.3.0).
-- [ ] Add `CHANGELOG.md` notes to the release description.
+- [ ] Validate GitHub Actions Lua syntax and ZIP packaging.
+- [ ] Test toggles, slider, race settings, catalog pagination, preview buttons and /emota commands in-game.
+- [ ] Check combat suppression and coexistence with ChalkBox.
+- [ ] Upload the generated `publish/EmotaSpeak-0.4.0.zip` (not a source ZIP).
+- [ ] Upload a **512×512 PNG** image (EmotaSpeak-CurseForge-Icon.png) as the CurseForge project icon.
+- [ ] Use the existing `assets/Icon.tga` for the game's AddOns icon.
+- [ ] Confirm supported game version in CurseForge and pick an appropriate license and Alpha/Beta channel until tested.
 
-### Suggested metadata
-
-- Category: Roleplay / Miscellaneous
-- Authors: Detok Whitemaine
-- Dependencies: None
-- Supported flavor: World of Warcraft: Forever
-- Suggested file: `publish/EmotaSpeak-0.3.0.zip` (generated, not tracked)
-- Project page / source: https://github.com/detok/emotaspeak
-- Issue reporting: GitHub Issues
-
-### Suggested initial changelog
-
-Initial feature-rich Forever preview with native Settings UI and Addon Compartment access, custom icon, session-paced voiced idle jokes, social reactions, and protected-data-safe diagnostic tools.
-
-**Note:** This draft is publication preparation, not a claim of CurseForge approval.
+Suggested category: Roleplay / Miscellaneous. Source: https://github.com/detok/emotaspeak
