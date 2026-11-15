@@ -37,7 +37,7 @@ jobs:
           with ZipFile(files[0]) as z:
               names=set(z.namelist())
           required={"EmotaSpeak/"+path for path in (
-              "EmotaSpeak.toc", "EmotaSpeak_Camelot.toc",
+              "LICENSE", "EmotaSpeak.toc", "EmotaSpeak_Camelot.toc",
               "EmotaSpeak_Personality.lua", "EmotaSpeak.lua", "EmotaSpeak_Settings.lua",
               "assets/Icon.tga")}
           assert names == required, (sorted(names),sorted(required))
