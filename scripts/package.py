@@ -11,6 +11,7 @@ MANIFESTS = ("EmotaSpeak.toc", "EmotaSpeak_Camelot.toc")
 ADDON_FILES = (
     "EmotaSpeak.toc",
     "EmotaSpeak_Camelot.toc",
+    "EmotaSpeak_Personality.lua",
     "EmotaSpeak.lua",
     "EmotaSpeak_Settings.lua",
     "assets/Icon.tga",
