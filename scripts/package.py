@@ -9,6 +9,7 @@ from zipfile import ZipFile, ZipInfo, ZIP_DEFLATED
 ROOT = Path(__file__).resolve().parent.parent
 MANIFESTS = ("EmotaSpeak.toc", "EmotaSpeak_Camelot.toc")
 ADDON_FILES = (
+    "LICENSE",
     "EmotaSpeak.toc",
     "EmotaSpeak_Camelot.toc",
     "EmotaSpeak_Personality.lua",
