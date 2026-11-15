@@ -1,11 +1,12 @@
 ## Interface: 16001
 ## Title: EmotaSpeak
-## Notes: Natural, occasional character reactions and voiced idle jokes.
+## Notes: Optional character reactions, racial flavor and customizable idle emotes.
 ## Author: Detok Whitemaine
-## Version: 0.3.0
+## Version: 0.4.0
 ## IconTexture: Interface\AddOns\EmotaSpeak\assets\Icon
 ## AddonCompartmentFunc: EmotaSpeak_OnAddonCompartmentClick
 ## SavedVariablesPerCharacter: EmotaSpeakDB
 
+EmotaSpeak_Personality.lua
 EmotaSpeak.lua
 EmotaSpeak_Settings.lua
