@@ -27,7 +27,7 @@ local idleTicker = nil
 -- Triggered emotes stay enabled by default; other entries are opt-in for idle
 -- variety, but each can be previewed manually from the native settings page.
 local automatic={WAVE=true,JOKE=true,TRAIN=true,CHEER=true,CRY=true,
-    MOURN=true,OOM=true,SIGH=true,BOW=true,LAUGH=true,FLEX=true}
+    MOURN=true,OOM=true,SIGH=true,BOW=true,LAUGH=true,FLEX=true,HEALME=true}
 -- Intentional, curated *default* idle reactions. They are checked by default in
 -- the emote catalog, and each can be disabled independently. Pose actions alter
 -- character state: only use them while the player is stationary and safe.
@@ -54,7 +54,7 @@ for _,entry in ipairs(idlePresets) do
     idleFeatured[entry.token]=true
     if entry.pose then poseTokens[entry.token]=true end
 end
-local defaults={"WAVE","JOKE","TRAIN","CHEER","CRY","MOURN","OOM","SIGH",
+local defaults={"WAVE","JOKE","TRAIN","CHEER","CRY","MOURN","OOM","SIGH","HEALME",
     "BOW","LAUGH","FLEX","DANCE","SALUTE","KNEEL","THANK","HELLO",
     "GOODBYE","NO","YES","APPLAUD","ROAR","SHY","SLEEP","SIT",
     "LAYDOWN","STAND","YAWN","PONDER","SHRUG","ROFL","STARE","LOOK",
