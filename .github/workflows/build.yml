@@ -20,8 +20,11 @@ jobs:
           sudo apt-get install -y lua5.1
       - name: Verify Lua syntax
         run: |
+          luac5.1 -p EmotaSpeak_Personality.lua
           luac5.1 -p EmotaSpeak.lua
           luac5.1 -p EmotaSpeak_Settings.lua
+      - name: Check standalone release invariants
+        run: python3 scripts/check_release.py
       - name: Package addon
         run: python3 scripts/package.py
       - name: Validate release contents
@@ -35,7 +38,7 @@ jobs:
               names=set(z.namelist())
           required={"EmotaSpeak/"+path for path in (
               "EmotaSpeak.toc", "EmotaSpeak_Camelot.toc",
-              "EmotaSpeak.lua", "EmotaSpeak_Settings.lua",
+              "EmotaSpeak_Personality.lua", "EmotaSpeak.lua", "EmotaSpeak_Settings.lua",
               "assets/Icon.tga")}
           assert names == required, (sorted(names),sorted(required))
           print("Validated", files[0])
