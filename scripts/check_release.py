@@ -8,6 +8,7 @@ ui = (root / "EmotaSpeak_Settings.lua").read_text(encoding="utf-8")
 personality = (root / "EmotaSpeak_Personality.lua").read_text(encoding="utf-8")
 manifests = [(root / n).read_text(encoding="utf-8") for n in
              ("EmotaSpeak.toc", "EmotaSpeak_Camelot.toc")]
+assert "Copyright (c) 2026 Detok" in (root / "LICENSE").read_text(encoding="utf-8")
 assert all("## Version: 0.4.0" in m for m in manifests)
 assert all(m.index("EmotaSpeak_Personality.lua") < m.index("EmotaSpeak.lua") <
            m.index("EmotaSpeak_Settings.lua") for m in manifests)
